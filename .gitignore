@@ -1,0 +1,7 @@
+*.bak
+*.dbg
+*.exe
+lib
+lib4nogui
+/extra
+backup
