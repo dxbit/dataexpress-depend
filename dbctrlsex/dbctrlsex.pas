@@ -911,13 +911,13 @@ var
   D: TDateTime;
 begin
   try
-    if CanFocus then SetFocus;
     B := True;
     D := ADate;
     if Assigned(FOnAcceptDate) then
       FOnAcceptDate(Self, D, B);
     if B then
       Self.Date := D;
+    if CanFocus then SetFocus;
     SelStart := Utf8Length(Text);
   except
     on E:Exception do
