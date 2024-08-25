@@ -1714,7 +1714,7 @@ begin
     btSingle, bts32, btU32: FRealSize := 4;
     btProcPtr: FRealSize := 2 * sizeof(Pointer) + sizeof(IPointer{Cardinal}); // 7bit
     btCurrency: FrealSize := Sizeof(Currency);
-    btPointer: FRealSize := 2 * sizeof(Pointer) + sizeof(LongBool); // ptr, type, freewhendone
+    btPointer: FRealSize := 2 * sizeof(Pointer) + sizeof(IPointer{LongBool}); // 7bit // ptr, type, freewhendone
     btDouble{$IFNDEF PS_NOINT64}, bts64{$ENDIF}: FrealSize := 8;
     btExtended: FrealSize := SizeOf(Extended);
     btReturnAddress: FrealSize := Sizeof(TBTReturnAddress);
@@ -4115,8 +4115,8 @@ begin
               Dest := Pointer(IPointer(Dest) + PointerSize);
               Src := Pointer(IPointer(Src) + PointerSize);
               LongBool(Dest^) := false;
-              Dest := Pointer(IPointer(Dest) + sizeof(LongBool));
-              Src := Pointer(IPointer(Src) + sizeof(LongBool));
+              Dest := Pointer(IPointer(Dest) + sizeof({LongBool}IPointer)); // 7bit
+              Src := Pointer(IPointer(Src) + sizeof({LongBool}IPointer));   // 7bit
             end;
           end else begin
             for i := 0 to Len -1 do
@@ -4147,8 +4147,8 @@ begin
                 Pointer(Pointer(IPointer(Dest) + PointerSize)^) := nil;
                 Pointer(Pointer(IPointer(Dest) + PointerSize2)^) := nil;
               end;
-              Dest := Pointer(IPointer(Dest) + PointerSize*2+sizeof(LongBool));
-              Src := Pointer(IPointer(Src) + PointerSize*2+sizeof(LongBool));
+              Dest := Pointer(IPointer(Dest) + PointerSize*2+sizeof({LongBool}IPointer));   // 7bit
+              Src := Pointer(IPointer(Src) + PointerSize*2+sizeof({LongBool}IPointer));     // 7bit
             end;
           end;
         end;
@@ -9732,7 +9732,7 @@ begin
 {$ENDIF}
       end;
     end;
-    datap := Pointer(IPointer(datap)+ (2*sizeof(Pointer)+sizeof(Longbool)));
+    datap := Pointer(IPointer(datap)+ (2*sizeof(Pointer)+sizeof({Longbool}IPointer)));    // 7bit
     p := PansiChar(p) + Result^.ElementSize;
   end;
 end;
@@ -9848,7 +9848,7 @@ begin
 {$ENDIF}
 {$ENDIF}
       end;
-      datap := Pointer(IPointer(datap)+ (2*sizeof(Pointer)+sizeof(LongBool)));
+      datap := Pointer(IPointer(datap)+ (2*sizeof(Pointer)+sizeof({LongBool}IPointer)));    // 7bit
       p := Pointer(IPointer(p) + Cardinal(v^.ElementSize));
     end;
     FreeMem(v.Data, v.ElementSize * v.ItemCount);
@@ -12093,11 +12093,11 @@ begin
       PPSVariantPointer(Res).DestType := cpt;
       Params.Add(Res);
       PPSVariantPointer(Res).DataDest := @paramRecord^.RAX;
-    end{ else      //Are there return values on the Stack in x64 - probably yes, but how?
+    end else      //Are there return values on the Stack in x64 - probably yes, but how?
     begin
       Res := CreateHeapVariant(cpt);
       Params.Add(Res);
-    end};
+    end;           // 7bit - блок else был почему-то закомментирован. Из-за Этого возникало AV при вызове обработчка-функции.
   end else Res := nil;
 
   //Now push remaining parameters on the Stack

@@ -36,10 +36,14 @@ type
   { TDBEditEx }
 
   TDBEditEx = class(TDBEdit)
+  private
+    FHidden: Boolean;
   protected
     procedure WMPaint(var Msg: TLMPaint); message LM_PAINT;
     procedure PaintWindow(DC: HDC); override;
     function GetDrawText: String; virtual;
+  published
+    property Hidden: Boolean read FHidden write FHidden default False;
   end;
 
   { TCustomDBEditButton }
@@ -56,7 +60,6 @@ type
     function GetButtonWidth: Integer;
     function GetDirectInput: Boolean;
     function GetFlat: Boolean;
-    procedure CheckButtonVisible;
     procedure SetButtonHint(const AValue: TTranslateString);
     procedure SetButtonNeedsFocus(const AValue: Boolean);
     procedure SetButtonWidth(const AValue: Integer);
@@ -93,6 +96,7 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
+    procedure CheckButtonVisible;
     procedure EnableButton(AValue: Boolean);
     property Button: TSpeedButton read FButton;
     property ButtonWidth : Integer read GetButtonWidth write SetButtonWidth;
@@ -552,9 +556,9 @@ end;
 procedure TCustomDBEditButton.CheckButtonVisible;
 begin
   If Assigned(FButton) then
-    FButton.Visible:={(csdesigning in ComponentState) or}
-                     (Visible and (Focused or not FButtonNeedsFocus) and
-                     (not FHideButton));
+    FButton.Visible:=((csdesigning in ComponentState) or
+                     (Visible and (Focused or not FButtonNeedsFocus))) and
+                     not FHideButton;
 end;
 
 procedure TCustomDBEditButton.SetButtonHint(const AValue: TTranslateString);

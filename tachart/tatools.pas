@@ -404,13 +404,14 @@ type
       FGraphPos: TDoublePoint;
       FIndex: Integer;
       FSeries: TBasicChartSeries;
-      procedure SetGraphPos(const ANewPos: TDoublePoint);
+      // procedure SetGraphPos(const ANewPos: TDoublePoint);
     public
       procedure Assign(ASource: TPointRef);
       function AxisPos(ADefaultSeries: TBasicChartSeries = nil): TDoublePoint;
-      property GraphPos: TDoublePoint read FGraphPos;
-      property Index: Integer read FIndex;
-      property Series: TBasicChartSeries read FSeries;
+      procedure SetGraphPos(const ANewPos: TDoublePoint); // 7bit
+      property GraphPos: TDoublePoint read FGraphPos {7bit ->} write FGraphPos;
+      property Index: Integer read FIndex {7bit ->} write FIndex;
+      property Series: TBasicChartSeries read FSeries {7bit ->} write FSeries;
     end;
 
   strict private
