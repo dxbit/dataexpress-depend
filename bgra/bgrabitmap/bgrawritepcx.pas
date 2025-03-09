@@ -28,7 +28,7 @@ function TBGRAWriterPCX.SaveHeader(Stream: TStream; Img: TFPCustomImage): boolea
 var
   Header: TPCXHeader;
 begin
-  {$IF FPC_FULLVERSION<30301}
+  {$IF FPC_FULLVERSION<30203}
   //Code copied from FPWriterPCX because FillChar may not be done
   Result := False;
   FillChar(Header, SizeOf(Header), 0);

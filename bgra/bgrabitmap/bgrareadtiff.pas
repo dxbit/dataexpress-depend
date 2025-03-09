@@ -50,10 +50,10 @@ interface
 
 uses
   Math, BGRAClasses, SysUtils, ctypes, zinflate, zbase, FPimage, FPTiffCmn,
-  BGRABitmapTypes {$IF FPC_FULLVERSION>=30301}, FPReadTiff{$ENDIF};
+  BGRABitmapTypes {$IF FPC_FULLVERSION>=30203}, FPReadTiff{$ENDIF};
 
 type
-  {$IF FPC_FULLVERSION<30301}
+  {$IF FPC_FULLVERSION<30203}
   TBGRAReaderTiff = class;
 
   TTiffCreateCompatibleImgEvent = procedure(Sender: TBGRAReaderTiff;
@@ -166,7 +166,7 @@ function ResolutionUnitToTifResolutionUnit(AResolutionUnit: TResolutionUnit): DW
 
 implementation
 
-{$IF FPC_FULLVERSION<30301}
+{$IF FPC_FULLVERSION<30203}
 function CMYKToFPColor(C,M,Y,K: Word): TFPColor;
 var R, G, B : LongWord;
 begin
@@ -1987,7 +1987,7 @@ var
 
   procedure ReadResolutionValues;
   begin
-    {$IF FPC_FULLVERSION<30301}
+    {$IF FPC_FULLVERSION<30203}
     if (CurFPImg is TCustomUniversalBitmap) then
     with TCustomUniversalBitmap(CurFPImg) do
     {$ELSE}
@@ -3238,7 +3238,7 @@ var
 
   procedure ReadResolutionValues;
   begin
-    {$IF FPC_FULLVERSION<30301}
+    {$IF FPC_FULLVERSION<30203}
     if (CurFPImg is TCustomUniversalBitmap) then
     with TCustomUniversalBitmap(CurFPImg) do
     {$ELSE}

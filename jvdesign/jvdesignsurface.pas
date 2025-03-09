@@ -52,7 +52,7 @@ uses
   win32proc,
   Messages,
   {$endif}
-  ExtCtrls, Contnrs, LMessages, Menus, Buttons;
+  ExtCtrls, TypInfo, LMessages, Menus, Buttons, StdCtrls;
 
 type
   TJvDesignSurface = class;
@@ -97,6 +97,8 @@ type
     property Client: TWinControl read FClient;
   end;
 
+  { TJvDesignCustomController }
+
   TJvDesignCustomController = class(TObject)
   private
     FSurface: TJvDesignSurface;
@@ -113,6 +115,7 @@ type
       virtual; abstract;
   public
     constructor Create(ASurface: TJvDesignSurface); virtual;
+    procedure Paint(Control: TControl; DC: HDC); virtual;
     property DragRect: TRect read GetDragRect;
     property Surface: TJvDesignSurface read FSurface;
   end;
@@ -187,13 +190,17 @@ type
     FStepX: Integer;
     FStepY: Integer;
     FUpdateOwner: TComponent;
+    FOldState: Integer;
 
     FPopupMenu: TPopupMenu;
 
     procedure MessengerOnChange(Sender: TObject);
     // 7bit
+    procedure BeginPaint(DC: HDC);
+    procedure EndPaint;
+    procedure PaintFieldNames(AContainer: TWinControl);
     procedure PaintClientGrid(AWinControl: TWinControl; DC: HDC);
-    procedure PaintControls(Sender: TControl; TheMessage: TLMPaint);
+    function PaintControls(Sender: TControl; TheMessage: TLMPaint): Boolean;
     procedure SetGridColor(AValue: TColor);
     procedure SetGridSizeX(AValue: Integer);
     procedure SetGridSizeY(AValue: Integer);
@@ -276,6 +283,7 @@ type
     property GridColor: TColor read FGridColor write SetGridColor;
     property StepX: Integer read FStepX;
     property StepY: Integer read FStepY;
+    property DesignCanvas: TCanvas read FDesignCanvas;
     //
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
     property OnGetAddClass: TJvDesignGetAddClassEvent
@@ -360,6 +368,256 @@ uses
 type
   TWinControlAccess = class(TWinControl);
 
+  TPaintRectData = class
+  public
+    Control: TControl;
+    ClientRect: TRect;
+    CtrlRect: TRect;
+    PaintRect: TRect;
+    FieldName: String;
+  end;
+
+  { TPaintRectList }
+
+  TPaintRectList = class(TList)
+  private
+    FTopParent: TWinControl;
+    FTopParentPos: TPoint;
+    function GetAboveControl(A, B: TControl): TControl;
+    function GetRects(Index: Integer): TPaintRectData;
+    procedure InnerAddRect(AControl: TControl; AClientRect, APaintRect: TRect; const AFieldName: String);
+  public
+    constructor Create(ATopParent: TWinControl);
+    procedure AddRect(AControl: TControl);
+    procedure Clear; override;
+    procedure DeleteRect(PRD: TPaintRectData);
+    property Rects[Index: Integer]: TPaintRectData read GetRects; default;
+  end;
+
+
+function GetPropStr(C: TComponent; const PropName: String): String;
+var
+  pInf: PPropInfo;
+begin
+  Result := '';
+  pInf := GetPropInfo(C, PropName);
+  if pInf <> nil then
+    Result := GetStrProp(C, pInf);
+end;
+
+
+{function GetAboveControl(A, B: TControl): TControl;
+var
+  Ai, Bi: Integer;
+begin
+  if A.Parent = B.Parent then
+  begin
+    Ai := A.Parent.GetControlIndex(A);
+    Bi := B.Parent.GetControlIndex(B);
+    if Ai > Bi then Result := A
+    else Result := B;
+  end
+  else
+    Result := GetAboveControl(A.Parent, B.Parent);
+end;  }
+
+// TR:
+//     1 2 3
+//     1 0 3
+//     1 4 3
+// 0 - это SR
+procedure SplitPaintRect(TR, SR: TRect; out R1, R2, R3, R4: TRect);
+begin
+  // 1
+  R1 := Rect(TR.Left, TR.Top, SR.Left, TR.Bottom);
+  // 2
+  R2 := Rect(SR.Left, TR.Top, SR.Right, SR.Top);
+  // 3
+  R3 := Rect(SR.Right, TR.Top, TR.Right, SR.Bottom);
+  // 4
+  R4 := Rect(SR.Left, SR.Bottom, SR.Right, TR.Bottom);
+end;
+
+{ TPaintRectList }
+
+function TPaintRectList.GetAboveControl(A, B: TControl): TControl;
+var
+  PL, PL2: array [0..20] of Integer;
+  P: TWinControl;
+  i, m, n: Integer;
+begin
+  if A.Parent = B.Parent then
+  begin
+    if A.Parent.GetControlIndex(A) > B.Parent.GetControlIndex(B) then
+    begin
+      if A is TWinControl then Exit(A)
+      else Exit(B);
+    end
+    else
+    begin
+      if B is TWinControl then Exit(B)
+      else Exit(A);
+    end;
+  end;
+
+  PL[0] := A.Parent.GetControlIndex(A);
+  P := A.Parent;
+  for i := 1 to 20 do
+    if P <> FTopParent then
+    begin
+      PL[i] := P.Parent.GetControlIndex(P);
+      P := P.Parent;
+    end
+    else
+    begin
+      m := i-1;
+      Break;
+    end;
+
+  PL2[0] := B.Parent.GetControlIndex(B);
+  P := B.Parent;
+  for i := 1 to 20 do
+    if P <> FTopParent then
+    begin
+      PL2[i] := P.Parent.GetControlIndex(P);
+      P := P.Parent;
+    end
+    else
+    begin
+      n := i-1;
+      Break;
+    end;
+
+  Result := A;
+  while True do
+  begin
+    if PL[m] > PL2[n] then Exit(A)
+    else if PL[m] < PL2[n] then Exit(B);
+    Dec(m);
+    Dec(n);
+    if n < 0 then Exit(A)
+    else if m < 0 then Exit(B);
+  end;
+end;
+
+function TPaintRectList.GetRects(Index: Integer): TPaintRectData;
+begin
+  Result := TPaintRectData(Items[Index]);
+end;
+
+procedure TPaintRectList.InnerAddRect(AControl: TControl; AClientRect,
+  APaintRect: TRect; const AFieldName: String);
+var
+  i: Integer;
+  SR, R1, R2, R3, R4: TRect;
+  PRD: TPaintRectData;
+begin
+  for i := Count - 1 downto 0 do
+  begin
+    PRD := Rects[i];
+    SR := APaintRect.Intersect(APaintRect, PRD.PaintRect);
+
+    if not SR.IsEmpty then
+    begin
+      if (AControl.Parent = PRD.Control) or (PRD.Control.Parent = AControl) then
+      begin
+        APaintRect := SR;
+        Break;
+      end
+      else if GetAboveControl(AControl, PRD.Control) = AControl then
+      begin
+        SplitPaintRect(PRD.PaintRect, SR, R1, R2, R3, R4);
+
+        Remove(PRD);
+
+        if not R1.IsEmpty then
+          InnerAddRect(PRD.Control, PRD.ClientRect, R1, PRD.FieldName);
+        if not R2.IsEmpty then
+          InnerAddRect(PRD.Control, PRD.ClientRect, R2, PRD.FieldName);
+        if not R3.IsEmpty then
+          InnerAddRect(PRD.Control, PRD.ClientRect, R3, PRD.FieldName);
+        if not R4.IsEmpty then
+          InnerAddRect(PRD.Control, PRD.ClientRect, R4, PRD.FieldName);
+
+        PRD.Free;
+        InnerAddRect(AControl, AClientRect, APaintRect, AFieldName);
+      end
+      else
+      begin
+        SplitPaintRect(APaintRect, SR, R1, R2, R3, R4);
+
+        if not R1.IsEmpty then
+          InnerAddRect(AControl, AClientRect, R1, AFieldName);
+        if not R2.IsEmpty then
+          InnerAddRect(AControl, AClientRect, R2, AFieldName);
+        if not R3.IsEmpty then
+          InnerAddRect(AControl, AClientRect, R3, AFieldName);
+        if not R4.IsEmpty then
+          InnerAddRect(AControl, AClientRect, R4, AFieldName);
+      end;
+
+      Exit;
+    end;
+  end;
+
+  PRD := TPaintRectData.Create;
+  PRD.Control := AControl;
+  PRD.ClientRect := AClientRect;
+  PRD.PaintRect := APaintRect;
+  PRD.PaintRect.Intersect(AClientRect);
+  PRD.FieldName := AFieldName;
+  Add(PRD);
+end;
+
+constructor TPaintRectList.Create(ATopParent: TWinControl);
+begin
+  inherited Create;
+  FTopParent := ATopParent;
+  FTopParentPos := ATopParent.ClientToScreen(Point(0, 0));
+end;
+
+procedure TPaintRectList.AddRect(AControl: TControl);
+var
+  CtrlPos: TPoint;
+  CtrlR, ClientR, ParentClientR: TRect;
+  FieldName: String;
+begin
+  CtrlPos := AControl.Parent.ClientToScreen(Point(AControl.Left, AControl.Top));
+  CtrlPos := CtrlPos.Subtract(FTopParentPos);
+  CtrlR := Rect(CtrlPos.X, CtrlPos.Y, CtrlPos.X + AControl.Width,
+    CtrlPos.Y + AControl.Height);
+
+  CtrlPos := AControl.ClientToScreen(Point(0, 0));
+  CtrlPos := CtrlPos.Subtract(FTopParentPos);
+  ClientR := Rect(CtrlPos.X, CtrlPos.Y, CtrlPos.X + AControl.ClientWidth,
+    CtrlPos.Y + AControl.ClientHeight);
+  FieldName := GetPropStr(AControl, 'FieldName');
+  if AControl is TCustomCheckBox then FieldName := '';
+
+  CtrlPos := AControl.Parent.ClientToScreen(Point(0, 0));
+  CtrlPos := CtrlPos.Subtract(FTopParentPos);
+  ParentClientR := Rect(CtrlPos.X, CtrlPos.Y, CtrlPos.X + AControl.Parent.ClientWidth,
+    CtrlPos.Y + AControl.Parent.ClientHeight);
+  CtrlR.InterSect(ParentClientR);
+
+  InnerAddRect(AControl, ClientR, CtrlR, FieldName);
+end;
+
+procedure TPaintRectList.Clear;
+var
+  i: Integer;
+begin
+  for i := 0 to Count - 1 do
+    Rects[i].Free;
+  inherited Clear;
+end;
+
+procedure TPaintRectList.DeleteRect(PRD: TPaintRectData);
+begin
+  Remove(PRD);
+  PRD.Free;
+end;
+
 //=== { TJvDesignCustomMessenger } ===========================================
 
 constructor TJvDesignCustomMessenger.Create;
@@ -387,10 +645,18 @@ procedure TJvDesignCustomMessenger.DesignChildren(AContainer: TWinControl;
   ADesigning: boolean);
 var
   I: integer;
+  C: TControl;
 begin
-  //  for I := 0 to AContainer.ControlCount - 1 do
-  for I := 0 to AContainer.ComponentCount - 1 do
-    DesignComponent(AContainer.Components[I], ADesigning);
+{  for I := 0 to AContainer.ControlCount - 1 do
+  begin
+    C := AContainer.Controls[I];
+    DesignComponent(C, ADesigning);
+    if C is TWinControl then
+      DesignChildren(TWinControl(C), ADesigning);
+  end; }
+  DesignComponent(AContainer, ADesigning);
+  //for I := 0 to AContainer.Controls[0].ComponentCount - 1 do
+  //  DesignComponent(AContainer.Controls[0].Components[I], ADesigning);
 end;
 
 procedure TJvDesignCustomMessenger.SetContainer(AValue: TWinControl);
@@ -402,13 +668,11 @@ function TJvDesignCustomMessenger.IsDesignMessage(ASender: TControl;
   var AMessage: TLMessage): boolean;
 
   function MousePoint: TPoint;
-  var
-    r: trect;
   begin
     with TLMMouse(AMessage) do
       MousePoint := Point(XPos, YPos);
 
-    Result := DesignClientToParent(Result, ASender, Container);
+    Result := DesignClientToParent(Result, ASender, Container{$ifdef linux}.Parent{$endif});
 
   end;
 
@@ -450,6 +714,7 @@ begin
       LM_ACTIVATE,LM_SHOWWINDOW,LM_KILLFOCUS,LM_SETCURSOR: result:=false;
       LM_NCMOUSEMOVE..LM_NCLBUTTONDBLCLK: result:=true;   }
 
+    //CM_ENTER, CM_EXIT, LM_SELCHANGE: Result := True;      // 7bit для Linux
     LM_MOUSEFIRST..LM_MOUSELAST:
       Result := FOnDesignMessage(ASender, AMessage, MousePoint);
     LM_KEYDOWN..LM_KEYUP, LM_PAINT, LM_ERASEBKGND, LM_WINDOWPOSCHANGED,
@@ -494,6 +759,11 @@ end;
 constructor TJvDesignCustomController.Create(ASurface: TJvDesignSurface);
 begin
   FSurface := ASurface;
+end;
+
+procedure TJvDesignCustomController.Paint(Control: TControl; DC: HDC);
+begin
+
 end;
 
 //CV
@@ -626,6 +896,57 @@ begin
   change;
 end;
 
+procedure TJvDesignSurface.BeginPaint(DC: HDC);
+begin
+  FOldState := SaveDC(DC);
+  FDesignCanvas.Handle := DC;
+end;
+
+procedure TJvDesignSurface.EndPaint;
+begin
+  RestoreDC(FDesignCanvas.Handle, FOldState);
+  FDesignCanvas.Handle := 0;
+end;
+
+procedure TJvDesignSurface.PaintFieldNames(AContainer: TWinControl);
+var
+  i: Integer;
+  C: TComponent;
+  PaintRects: TPaintRectList;
+  Canv: TCanvas;
+  TS: TTextStyle;
+  PRD: TPaintRectData;
+  PR, CR: TRect;
+  Space: Integer;
+begin
+  PaintRects := TPaintRectList.Create(AContainer);
+  for i := 0 to AContainer.ComponentCount - 1 do
+  begin
+    C := AContainer.Components[i];
+    if (C is TControl) and TControl(C).IsVisible then
+      PaintRects.AddRect(TControl(C));
+  end;
+  Space := AContainer.Scale96ToScreen(2);
+
+  Canv := FDesignCanvas;
+  FillChar(TS, SizeOf(TS), 0);
+  TS.SingleLine := True;
+  TS.Clipping := True;
+
+  for i := 0 to PaintRects.Count - 1 do
+  begin
+    PRD := PaintRects[i];
+    if PRD.FieldName = '' then Continue;
+    PR := PRD.PaintRect;
+    CR := PRD.ClientRect;
+
+    Canv.Font.Assign(PRD.Control.Font);
+    Canv.TextRect(PR, CR.Left + Space, CR.Top + Space, PRD.FieldName, TS);
+  end;
+
+  PaintRects.Free;
+end;
+
 // 7bit begin
 // взято из designer.pp
 
@@ -633,11 +954,10 @@ procedure TJvDesignSurface.PaintClientGrid(AWinControl: TWinControl; DC: HDC);
 var
   Clip: integer;
   CtrlCount: integer;
-  i, OldState: integer;
+  i: integer;
   //CurControl: TControl;
 begin
-  OldState := SaveDC(DC);
-  FDesignCanvas.Handle := DC;
+  BeginPaint(DC);
   try
     // exclude all child control areas
     CtrlCount := AWinControl.ControlCount;
@@ -659,6 +979,7 @@ begin
     FDesignCanvas.Pen.Color := FGridColor;
     FDesignCanvas.Pen.Width := 1;
     FDesignCanvas.Pen.Style := psSolid;
+    FDesignCanvas.Pen.Mode := pmCopy;
     DrawGrid(FDesignCanvas.Handle, TWinControlAccess(AWinControl).GetLogicalClientRect,
       FGridSizeX, FGridSizeY);
 
@@ -679,16 +1000,31 @@ begin
       end;
     end;}
   finally
-    RestoreDC(DC, OldState);
-    FDesignCanvas.Handle := 0;
+    EndPaint;
   end;
 end;
 
-procedure TJvDesignSurface.PaintControls(Sender: TControl; TheMessage: TLMPaint);
+function TJvDesignSurface.PaintControls(Sender: TControl; TheMessage: TLMPaint
+  ): Boolean;
 begin
+  Result := True;
   Sender.Dispatch(TheMessage);
+
   if FShowGrid and (Sender is TWinControl) and (csAcceptsControls in Sender.ControlStyle) then
+  begin
     PaintClientGrid(TWinControl(Sender), TheMessage.DC);
+  end;
+
+  {$ifdef linux}
+  if IsDesignerDC(FContainer.Parent.Handle, TheMessage.DC) then
+  try
+    BeginPaint(TheMessage.DC);
+    Controller.Paint(FContainer.Parent, TheMessage.DC);
+    PaintFieldNames(FContainer);
+  finally
+    EndPaint;
+  end;
+  {$endif}
 end;
 
 procedure TJvDesignSurface.SetGridColor(AValue: TColor);
@@ -842,7 +1178,7 @@ end;
 function TJvDesignSurface.FindControl(AX, AY: integer): TControl;
 var
   C, C0: TControl;
-  P: TPoint;
+  P, Offset: TPoint;
   r: trect;
 begin
   P := Point(AX, AY);
@@ -857,6 +1193,10 @@ begin
       Dec(p.x, R.Left);
       Dec(p.Y, R.Top);
     end;
+    {$else}
+    Offset := GetControlClientOffset(C);
+    Dec(P.X, Offset.X);
+    Dec(P.Y, Offset.Y);
     {$endif}
 
     Dec(P.X, C.Left);
@@ -887,6 +1227,7 @@ function TJvDesignSurface.ContainerToSelectedContainer(const APt: TPoint): TPoin
 var
   C: TControl;
   r: trect;
+  Offset: TPoint;
 begin
   Result := APt;
   C := SelectedContainer;
@@ -901,6 +1242,10 @@ begin
         Dec(Result.Y, R.Top);
       end;
     end;
+    {$else}
+    Offset := GetControlClientOffset(C);
+    Dec(Result.X, Offset.X);
+    Dec(Result.Y, Offset.Y);
     {$endif}
     Dec(Result.X, C.Left);
     Dec(Result.Y, C.Top);
@@ -954,7 +1299,7 @@ begin
       CO := TControl(C);
       CO.Parent := SelectedContainer;
       CO.BoundsRect := GetBounds;
-      CO.PopupMenu := container.PopupMenu;
+      //CO.PopupMenu := container.PopupMenu;
 
       Select(CO);
     end;
@@ -1274,10 +1619,12 @@ begin
 
         if Result and (FPopupMenu <> nil) then
         begin
-          p := container.ClientToScreen(APt);
+          FPopupMenu.Popup;
+
+          {p := container.ClientToScreen(APt);
 
           FPopupMenu.PopupComponent := TComponent(FindControl(Apt.x, apt.y));
-          FPopupMenu.PopUp(p.x, p.y);
+          FPopupMenu.PopUp(p.x, p.y); }
         end;
 
         //  result:=true;
@@ -1363,7 +1710,7 @@ begin
         end;   }
 
       LM_WINDOWPOSCHANGED, LM_ERASEBKGND: Result := False;
-      LM_PAINT: PaintControls(ASender, TLMPaint(AMsg));    // 7bit result:=false;
+      LM_PAINT: Result := PaintControls(ASender, TLMPaint(AMsg));   // 7bit result:=false;
       {LM_RBUTTONDOWN,}LM_MBUTTONDOWN{,LM_RBUTTONUP}: Result := True;
 
       CN_KEYDOWN, CN_CHAR, CN_SYSKEYUP, CN_SYSKEYDOWN, CN_SYSCHAR: Result := True;

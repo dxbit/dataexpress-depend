@@ -16,7 +16,8 @@ uses
   windows,
   win32proc,
   {$endif}
-  SysUtils, LCLProc, LCLType, LResources, LCLIntf, LMessages,    Classes, Controls, Graphics, Forms, dialogs;
+  SysUtils, LCLProc, LCLType, LResources, LCLIntf, LMessages, Classes, FPCanvas,
+  Controls, Graphics, Forms, dialogs;
 
 type
   TDesignerDCFlag = (
@@ -65,6 +66,7 @@ type
 
 
 
+function GetControlClientOffset(C: TControl): TPoint; // 7bit
 function DesignClientToParent(const APt: TPoint; AControl, AParent: TControl): TPoint;
 
 function DesignMin(AA, AB: Integer): Integer;
@@ -78,6 +80,7 @@ function DesignNameIsUnique(AOwner: TComponent; const AName: string): Boolean;
 function DesignUniqueName(AOwner: TComponent; const AClassName: string): string;
 
 procedure DesignPaintRubberbandRect(AContainer: TWinControl; ARect: TRect; APenStyle: TPenStyle);
+procedure DesignPaintRubberbandRect(Container: TControl; Canvas: TCanvas; ARect: TRect); overload;
 procedure DesignPaintGrid(ACanvas: TCanvas; const ARect: TRect;
   ABackColor: TColor = clBtnFace; AGridColor: TColor = clBlack;
   ADivPixels: Integer = 8);
@@ -104,10 +107,30 @@ const
 
 implementation
 
+uses
+  ComCtrls;
+
+// 7bit
+function GetControlClientOffset(C: TControl): TPoint;
+var
+  P, P2: TPoint;
+begin
+  Result := Point(0, 0);
+  P := C.ClientToScreen(Point(0, 0));
+  if C.Parent <> nil then
+  begin
+    P2 := C.Parent.ClientToScreen(Point(C.Left, C.Top));
+    Result := Point(P.X - P2.X, P.Y - P2.Y);
+  end;
+end;
+//
+
 function DesignClientToParent(const APt: TPoint; AControl, AParent: TControl): TPoint;
-var r: trect;
+var
+  R: trect;
 begin
   Result := APt;
+
   while (AControl <> AParent) and (AControl <> nil) do
   begin
     {$ifdef windows}
@@ -205,35 +228,27 @@ begin
   until DesignNameIsUnique(AOwner, Result);
 end;
 
-procedure DesignPaintRubberbandRect(AContainer: TWinControl; ARect: TRect; APenStyle: TPenStyle);
+procedure DesignPaintRubberbandRect(AContainer: TWinControl; ARect: TRect;
+  APenStyle: TPenStyle);
 var
   DesktopWindow: HWND;
   DC: HDC;
   C: TCanvas;
-  P1, P2: TPoint;   // 7bit
 begin
-  //AContainer:=nil;
-  //if (AContainer=nil) or not (AContainer is TCustomForm) then
   begin
     if AContainer = nil then
-      DesktopWindow := 0 //CV GetDesktopWindow
+      DesktopWindow := 0
     else
     begin
       DesktopWindow := AContainer.Handle;
-      {$ifndef windows} // 7bit
-      P1 := AContainer.Parent.ClientToScreen(AContainer.BoundsRect.TopLeft);
-      P2 := AContainer.ClientToScreen(Point(0, 0));
-      OffsetRect(ARect, P2.X - P1.X, P2.Y - P1.Y);
-      {$endif}        //
       ARect.TopLeft := AContainer.ScreenToClient(ARect.TopLeft);
       ARect.BottomRight := AContainer.ScreenToClient(ARect.BottomRight);
     end;
-    //CV DC := GetDCEx(DesktopWindow, 0, DCX_CACHE or DCX_LOCKWINDOWUPDATE);
 
     {$ifdef windows}
     DC:=GetDCEx(DesktopWindow,0,DCX_CACHE or DCX_CLIPSIBLINGS);
     {$else}
-    DC := GetDC(DesktopWindow);
+    DC:=GetDC(DesktopWindow);
     {$endif}
 
     try
@@ -254,25 +269,6 @@ begin
       ReleaseDC(DesktopWindow, DC);
     end;
   end;
-
- { else
-  begin
-    ARect.TopLeft := AContainer.ScreenToClient(ARect.TopLeft);
-    ARect.BottomRight := AContainer.ScreenToClient(ARect.BottomRight);
-
-    GetDCEx(Handle,0,DCX_CACHE or
-    DCX_CLIPSIBLINGS);
-
-
-    c:=tcustomform(AContainer).canvas;
-    c.Pen.Style := APenStyle;
-    c.Pen.Color := clWhite;
-    c.Pen.Mode := pmXor;
-
-    c.Brush.Style := bsClear;
-    c.Rectangle(ARect);
-
-  end;}
 end;
 
 procedure DesignPaintRules(ACanvas: TCanvas; const ARect: TRect;
@@ -314,8 +310,27 @@ begin
   end;
 end;
 
+procedure DesignPaintRubberbandRect(Container: TControl; Canvas: TCanvas;
+  ARect: TRect);
+begin
+  with Canvas do
+  begin
+    //Pen.Style := psDash;
+    Pen.Color := clMaroon;
+    //Pen.Color := clWhite;
+    //Pen.Mode := pmXor;
+    Brush.Style := bsClear;
+
+    ARect.TopLeft := Container.ScreenToClient(ARect.TopLeft);
+    ARect.BottomRight := Container.ScreenToClient(ARect.BottomRight);
+
+    Rectangle(ARect);
+    Container.Invalidate;
+  end;
+end;
+
 procedure DesignPaintGrid(ACanvas: TCanvas; const ARect: TRect;
-  ABackColor, AGridColor: TColor; ADivPixels: Integer);
+  ABackColor: TColor; AGridColor: TColor; ADivPixels: Integer);
 var
   b: TBitmap;
   I: Integer;

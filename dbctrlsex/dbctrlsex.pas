@@ -851,10 +851,10 @@ begin
 end;
 
 function TDBDateEditEx.GetDate: TDateTime;
-var
-  ADate: string;
+//var
+//  ADate: string;
 begin
-  if FDefaultToday then
+  {if FDefaultToday then
     Result := SysUtils.Date
   else
     Result := NullDate;
@@ -867,7 +867,12 @@ begin
       Result := StrToDateDef(ADate, Result)
     else
       Result := ParseDate(ADate,DateOrder,Result)
-  end;
+  end;  }
+
+    // *7bit* 02.11.24
+  if (Field <> nil) and (Field.DataSet <> nil) and (Field.DataSet.Active) then
+    Result := Field.AsDateTime;
+  //
 end;
 
 function TDBDateEditEx.IsStoreTitle: boolean;

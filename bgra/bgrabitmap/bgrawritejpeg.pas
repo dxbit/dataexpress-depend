@@ -22,7 +22,7 @@ type
 
   TBGRAWriterJPEG = class(TFPWriterJPEG)
   protected
-    {$IF FPC_FULLVERSION<30301}
+    {$IF FPC_FULLVERSION<30203}
     ACompressInfo: jpeg_compress_struct;
     FError: jpeg_error_mgr;
     FProgressMgr: TFPJPEGProgressManager;
@@ -36,7 +36,7 @@ implementation
 
 uses BGRABitmapTypes;
 
-{$IF FPC_FULLVERSION<30301}
+{$IF FPC_FULLVERSION<30203}
 procedure JPEGError(CurInfo: j_common_ptr);
 begin
   if CurInfo=nil then exit;
@@ -214,7 +214,7 @@ end;
 {$ENDIF}
 
 initialization
-  {$IF FPC_FULLVERSION<30301}
+  {$IF FPC_FULLVERSION<30203}
   with jpeg_std_error do begin
     error_exit:=@JPEGError;
     emit_message:=@EmitMessage;

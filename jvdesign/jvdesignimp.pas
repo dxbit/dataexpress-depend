@@ -15,7 +15,8 @@ uses
   win32proc,
   {$endif}
   LCLProc, LCLType, LResources, LCLIntf, LMessages, SysUtils, Classes, types,
-  Controls, Graphics, Forms, ExtCtrls, Contnrs, JvDesignUtils, JvDesignSurface, Dialogs;
+  Controls, Graphics, Forms, ExtCtrls, Contnrs, JvDesignUtils, JvDesignSurface, Dialogs,
+  StdCtrls;
 
 const
   cJvDesignDefaultHandleWidth = 8;
@@ -93,10 +94,13 @@ type
     property HandleWidth: Integer read FHandleWidth write SetHandleWidth default cJvDesignDefaultHandleWidth;
   end;
 
+  { TJvDesignCustomMouseTool }
+
   TJvDesignCustomMouseTool = class(TObject)
   protected
     FDragRect: TRect;
   public
+    procedure Paint(Control: TControl; DC: HDC); virtual;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState;
       X, Y: Integer); virtual; abstract;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); virtual; abstract;
@@ -110,6 +114,8 @@ type
   TJvDesignAction = (daSelectParent, daDelete, daCopy, daCut, daPaste,
     daNudgeLeft, daNudgeRight, daNudgeUp, daNudgeDown, daGrowWidth,
     daShrinkWidth, daGrowHeight, daShrinkHeight, daLastAction = MaxInt);
+
+  { TJvDesignController }
 
   TJvDesignController = class(TJvDesignCustomController)
   private
@@ -131,6 +137,8 @@ type
     function MouseMove(X, Y: Integer; TheMessage: TLMMouse): Boolean; override;
     function MouseUp(Button: TMouseButton; X, Y: Integer; TheMessage: TLMMouse): Boolean; override;
     procedure Action(AAction: TJvDesignAction);
+  public
+    procedure Paint(Control: TControl; DC: HDC); override;
   end;
 
   TJvDesignMouseTool = class(TJvDesignCustomMouseTool)
@@ -157,12 +165,15 @@ type
     procedure PaintDragRects;
   public
     constructor Create(AOwner: TJvDesignSurface); override;
+    procedure Paint(Control: TControl; DC: HDC); override;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState;
       X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState;
       X, Y: Integer); override;
   end;
+
+  { TJvDesignBander }
 
   TJvDesignBander = class(TJvDesignMouseTool)
   protected
@@ -171,6 +182,7 @@ type
     procedure CalcDragRect; virtual;
     procedure PaintDragRect; virtual;
   public
+    procedure Paint(Control: TControl; DC: HDC); override;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState;
       X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
@@ -188,9 +200,6 @@ type
     procedure ApplyDragRect;
     procedure ApplyMouseDelta(X, Y: Integer);
     procedure CalcDragRect; override;
-    {$ifndef windows}
-    procedure PaintDragRect; override;
-    {$endif}
   public
     constructor CreateSizer(AOwner: TJvDesignSurface; AHandle: TJvDesignHandleId);
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
@@ -762,6 +771,15 @@ begin
   Result := cCurs[GetHitHandle(AX, AY)];
 end;
 
+{ TJvDesignCustomMouseTool }
+
+procedure TJvDesignCustomMouseTool.Paint(Control: TControl; DC: HDC);
+begin
+
+end;
+
+{ TJvDesignCustomMouseTool }
+
 //=== { TJvDesignController } ================================================
 
 procedure TJvDesignController.Action(AAction: TJvDesignAction);
@@ -796,6 +814,12 @@ begin
         GrowComponents(0, -1);
     end;
   Surface.UpdateDesigner;
+end;
+
+procedure TJvDesignController.Paint(Control: TControl; DC: HDC);
+begin
+  if FMouseTool <> nil then
+    FMouseTool.Paint(Control, DC);
 end;
 
 function TJvDesignController.GetDragRect: TRect;
@@ -922,7 +946,7 @@ var
    //   if WasActive then
    //     TJvDesignPanel(Surface.Container).Active := False;
 
-      Surface.Container.SetFocus;
+      Surface.Container{$ifdef linux}.Parent{$endif}.SetFocus;
 
    //   if WasActive then
    //     TJvDesignPanel(Surface.Container).Active := True;
@@ -1058,7 +1082,8 @@ begin
   if not FMouseIsDown then
   begin
     cr := Surface.GetCursor(X, Y);
-    if (cr <> crHandPoint) and (cr <> crDefault) then SetCursor(Screen.Cursors[cr]);
+    if (cr <> crHandPoint) and (cr <> crDefault) then SetCursor(Screen.Cursors[cr])
+    {$ifdef linux}else SetCursor(crDefault){$endif}   // 7bit Без этой строчки курсор остается как при наведении на манипулятор (не возвращается стрелка).
   end
   else
   begin
@@ -1224,6 +1249,14 @@ begin
   SetLength(FDragRects, Surface.Count);
 end;
 
+procedure TJvDesignMover.Paint(Control: TControl; DC: HDC);
+var
+  i: Integer;
+begin
+  for i := 0 to Surface.Count - 1 do
+    DesignPaintRubberbandRect(Control, Surface.DesignCanvas, FDragRects[i]);
+end;
+
 procedure TJvDesignMover.CalcDragRects;
 var
   Delta: TPoint;
@@ -1257,8 +1290,6 @@ var
   I: Integer;
   ScreenPoint: TPoint;
 begin
-
-
   CalcDragRects;
   for I := 0 to Surface.Count - 1 do
   begin
@@ -1274,19 +1305,11 @@ end;
 procedure TJvDesignMover.PaintDragRects;
 var
   I: Integer;
-  WC: TWinControl;
 begin
+  {$ifdef windows}
   for I := 0 to Surface.Count - 1 do
-  begin
-    {$ifdef windows}
     DesignPaintRubberbandRect(Surface.Container, FDragRects[I], psDot);
-    {$else}
-    // 7bit
-    WC := Surface.Selection[I].Parent;
-    DesignPaintRubberbandRect(WC, FDragRects[I], psDot);
-    //
-    {$endif}
-  end;
+  {$endif}
 end;
 
 procedure TJvDesignMover.ApplyDragRects;
@@ -1338,7 +1361,7 @@ procedure TJvDesignBander.CalcDragRect;
 begin
   with GetMouseDelta do
   begin
-    DragRect := Rect(0, 0, X, Y);
+    FDragRect := Rect(0, 0, X, Y);
     OffsetRect(FDragRect, FMouseStart.X, FMouseStart.Y);
   end;
 end;
@@ -1357,7 +1380,17 @@ end;
 
 procedure TJvDesignBander.PaintDragRect;
 begin
+  {$ifdef windows}
   DesignPaintRubberbandRect(Surface.Container, GetPaintRect, psDot);
+  {$endif}
+end;
+
+procedure TJvDesignBander.Paint(Control: TControl; DC: HDC);
+var
+  R: TRect;
+begin
+  R := GetPaintRect;
+  DesignPaintRubberbandRect(Surface.Container, Surface.DesignCanvas, R);
 end;
 
 procedure TJvDesignBander.MouseDown(Button: TMouseButton; Shift: TShiftState;
@@ -1433,13 +1466,6 @@ begin
   ApplyMouseDelta(Delta.X, Delta.Y);
   FDragRect := DesignValidateRect(FDragRect);
 end;
-
-{$ifndef windows}
-procedure TJvDesignSizer.PaintDragRect;
-begin
-  DesignPaintRubberbandRect(TWinControl(GetClient), GetPaintRect, psDot);
-end;
-{$endif}
 
 function TJvDesignSizer.GetClient: TControl;
 begin
@@ -1588,7 +1614,7 @@ procedure TJvDesignDesignerMessenger.SetContainer(AValue: TWinControl);
     P: TWinControl;
   begin
     P := Container;
-    while P.Parent <> nil do
+    while (P.Parent <> nil) {and not (P is TCustomForm)} do
       P := P.Parent;
     if not (P is TCustomForm) then
       raise EJVCLException.CreateResFmt(@RsEOldestFmt , [ClassName]);
