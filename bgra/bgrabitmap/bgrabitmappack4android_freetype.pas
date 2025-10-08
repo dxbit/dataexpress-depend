@@ -2,7 +2,7 @@
   This source is only used to compile and install the package.
  }
 
-unit BGRABitmapPack4NoGUI;
+unit BGRABitmapPack4Android_FreeType;
 
 {$warn 5023 off : no warning about unused units}
 interface
@@ -20,11 +20,11 @@ uses
   UnzipperExt, BGRALzpCommon, BGRAWriteLzp, BGRAReadXPM, BGRAUnits, 
   BGRAReadBmpMioMap, BGRAArrow, BGRAGraphics, BGRAUTF8, BGRATypewriter, 
   BGRASVG, BGRASVGShapes, BGRASVGType, BGRAPalette, BGRAColorQuantization, 
-  BGRADithering, BGRAFreeType, BGRACustomTextFX, BGRAWritePNG, BGRAGifFormat, 
+  BGRADithering, BGRACustomTextFX, BGRAWritePNG, BGRAGifFormat, 
   BGRANoGUIBitmap, BGRASceneTypes, BGRARenderer3D, BGRAWriteBmpMioMap, 
-  BGRASpriteGL, BGRAOpenGLType, BGRAOpenGL, BGRACanvasGL, BGRAPhoxo, 
-  BGRAFilterScanner, BGRAFilterType, BGRAFilterBlur, BGRAMultiFileType, 
-  BGRAWinResource, BGRAUnicode, BGRAClasses, BGRAPDF;
+  BGRASpriteGL, BGRAOpenGLType, BGRACanvasGL, BGRAPhoxo, BGRAFilterScanner, 
+  BGRAFilterType, BGRAFilterBlur, BGRAMultiFileType, BGRAWinResource, 
+  BGRAUnicode, BGRAClasses, BGRAFreeType;
 
 implementation
 

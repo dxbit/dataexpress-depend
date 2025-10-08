@@ -5,6 +5,7 @@
            - added Resolution support
 }
 {*****************************************************************************}
+{ Imports the writer for the JPEG image format }
 unit BGRAWriteJpeg;
 
 {$mode objfpc}{$H+}
@@ -12,14 +13,14 @@ unit BGRAWriteJpeg;
 interface
 
 uses
-  Classes, SysUtils, FPImage, JPEGLib, FPReadJPEG, FPWriteJPEG, BGRAReadJPeg,
-  JcAPIstd, JcAPImin, JDataDst, JcParam, JError;
+  Classes, SysUtils, FPImage, FPReadJPEG, FPWriteJPEG
+
+  {$IF FPC_FULLVERSION<30203}, JPEGLib, JcAPIstd, JcAPImin, JDataDst, JcParam, JError{$ENDIF};
 
 type
-  { TBGRAWriterJPEG }
-
   TFPJPEGCompressionQuality = 1..100;   // 100 = best quality, 25 = pretty awful
 
+  {* Extends the TFPWriterJPEG to save resolution }
   TBGRAWriterJPEG = class(TFPWriterJPEG)
   protected
     {$IF FPC_FULLVERSION<30203}
@@ -30,6 +31,12 @@ type
     procedure WriteResolutionValues(Img: TFPCustomImage); virtual;
     procedure InternalWrite(Str: TStream; Img: TFPCustomImage); override;
     {$ENDIF}
+
+  published
+    //property CompressInfo : jpeg_compress_struct; rw
+    property CompressionQuality;  //: TFPJPEGCompressionQuality; rw
+    property ProgressiveEncoding; //: boolean; rw
+    property GrayScale;           //: boolean; rw
   end;
 
 implementation
@@ -37,6 +44,15 @@ implementation
 uses BGRABitmapTypes;
 
 {$IF FPC_FULLVERSION<30203}
+function ResolutionUnitTodensity_unit(AResolutionUnit: TResolutionUnit): UINT8;
+begin
+  Case AResolutionUnit of
+  ruPixelsPerInch: Result :=1;
+  ruPixelsPerCentimeter: Result :=2;
+  else Result :=0;
+  end;
+end;
+
 procedure JPEGError(CurInfo: j_common_ptr);
 begin
   if CurInfo=nil then exit;
@@ -224,8 +240,6 @@ initialization
   end;
   {$ENDIF}
 
-  if ImageHandlers.ImageWriter['JPEG graphics']=nil
-  then ImageHandlers.RegisterImageWriter ('JPEG graphics', 'jpg;jpeg', TBGRAWriterJPEG);
-  DefaultBGRAImageWriter[ifJpeg] := TBGRAWriterJPEG;
+  BGRARegisterImageWriter(ifJpeg, TBGRAWriterJPEG, True, 'JPEG Graphics', 'jpg;jpeg');
 
 end.

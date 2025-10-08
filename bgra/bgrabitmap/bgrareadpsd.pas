@@ -17,6 +17,7 @@
              - code fixes for reading palettes
 
 }
+{ Provides reader for Photoshop image format }
 unit BGRAReadPSD;
 
 {$mode objfpc}{$H+}
@@ -173,6 +174,7 @@ type
   end;
   PPSDResourceBlock =^TPSDResourceBlock;
 
+  { Data block }
   TPSDResourceBlockData = packed record
     Size:LongWord;
     Data:Byte;
@@ -180,6 +182,7 @@ type
   PPSDResourceBlockData =^TPSDResourceBlockData;
   {$ENDIF}
 
+  { Reader for Photoshop image format }
   TBGRAReaderPSD = class(TFPReaderPSD)
   private
     FCompressed: boolean;
@@ -372,8 +375,9 @@ end;
 procedure TBGRAReaderPSD.ReadResourceBlockData(Img: TFPCustomImage; blockID:Word;
   blockName:ShortString; Size: LongWord; Data: Pointer);
 var
-  ResolutionInfo:TResolutionInfo;
+  PsdResolution:TResolutionInfo;
   ResDWord: DWord;
+  VResolutionUnit:TResolutionUnit;
 
 begin
   {$IF FPC_FULLVERSION<30203}
@@ -382,23 +386,21 @@ begin
           if (Img is TCustomUniversalBitmap) then
           with TCustomUniversalBitmap(Img) do
           begin
-            ResolutionInfo :=TResolutionInfo(Data^);
+            PsdResolution :=TResolutionInfo(Data^);
             //MaxM: Do NOT Remove the Casts after BEToN
-            ResolutionUnit :=PSDResolutionUnitToResolutionUnit(BEToN(Word(ResolutionInfo.hResUnit)));
+            ResolutionUnit :=PSDResolutionUnitToResolutionUnit(BEToN(Word(PsdResolution.hResUnit)));
 
             //MaxM: Resolution always recorded in a fixed point implied decimal int32
             //      with 16 bits before point and 16 after (cast as DWord and divide resolution by 2^16
-            ResDWord :=BEToN(DWord(ResolutionInfo.hRes));
+            ResDWord :=BEToN(DWord(PsdResolution.hRes));
             ResolutionX :=ResDWord/65536;
-            ResDWord :=BEToN(DWord(ResolutionInfo.vRes));
-            ResolutionY :=ResDWord/65536;
 
-            if (ResolutionUnit<>ruNone) and
-               (ResolutionInfo.vResUnit<>ResolutionInfo.hResUnit)
-            then Case BEToN(Word(ResolutionInfo.vResUnit)) of
-                 PSD_RES_INCH: ResolutionY :=ResolutionY/2.54; //Vertical Resolution is in Inch convert to Cm
-                 PSD_RES_CM: ResolutionY :=ResolutionY*2.54; //Vertical Resolution is in Cm convert to Inch
-                 end;
+            //vertical resolution unit can be be different from horizontal resolution unit in PSD
+            VResolutionUnit :=PSDResolutionUnitToResolutionUnit(BEToN(Word(PsdResolution.vResUnit)));
+            //if not specified, assume it is the same as horizontal
+            if VResolutionUnit = ruNone then VResolutionUnit := ResolutionUnit;
+            ResDWord :=BEToN(DWord(PsdResolution.vRes));
+            ResolutionY :=ConvertResolution(ResDWord/65536, VResolutionUnit, ResolutionUnit);
           end;
         end;
   end;
@@ -901,7 +903,6 @@ begin
 end;
 
 initialization
-
-  DefaultBGRAImageReader[ifPsd] := TBGRAReaderPSD;
+  BGRARegisterImageReader(ifPsd, TBGRAReaderPSD, True, 'Photoshop Format', 'psd;pdd');
 
 end.

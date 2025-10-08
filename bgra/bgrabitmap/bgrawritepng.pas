@@ -16,16 +16,18 @@
            - added Resolution support
 }
 {*****************************************************************************}
+
+{ Implements the writer for the PNG image format }
 unit BGRAWritePNG;
 
 {$mode objfpc}{$H+}
 
 interface
 
-
 uses sysutils, BGRAClasses, FPImage, FPImgCmn, BGRAPNGComn, ZStream, BGRABitmapTypes;
 
 type
+  { Information about frame to write in PNG }
   TPNGFrameToWrite = record
     FrameControl: TFrameControlChunk;
     Image: TFPCustomImage;
@@ -37,8 +39,7 @@ type
 
   TColorFormatFunction = function (color:TFPColor) : TColorData of object;
 
-  { TBGRAWriterPNG }
-
+  {* Extends the TFPCustomImageWriter to write the PNG image format }
   TBGRAWriterPNG = class (TBGRACustomWriterPNG)
     private
       FCompressedText, FWordSized, FIndexed,
@@ -131,10 +132,12 @@ type
         AImage:TFPCustomImage;  // default image (may be as well in the animation)
         AAnimation: TPNGArrayOfFrameToWrite;
         ARepeatCount: integer = 0); // loop count (0 for infinite loop)
-      property GrayScale : boolean read FGrayscale write FGrayScale;
       property Indexed : boolean read FIndexed write FIndexed;
       property CustomPalette: TFPPalette read FCustomPalette write FCustomPalette;
       property CompressedText : boolean read FCompressedText write FCompressedText;
+
+    published
+      property GrayScale : boolean read FGrayscale write FGrayScale;
       property WordSized : boolean read FWordSized write FWordSized;
       property CompressionLevel : TCompressionLevel read FCompressionLevel write FCompressionLevel;
   end;
@@ -1140,7 +1143,6 @@ begin
 end;
 
 initialization
-
-  DefaultBGRAImageWriter[ifPng] := TBGRAWriterPNG;
+  BGRARegisterImageWriter(ifPng, TBGRAWriterPNG, True, 'Portable Network Graphics', 'png');
 
 end.

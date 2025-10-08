@@ -38,12 +38,14 @@ type
   TDBEditEx = class(TDBEdit)
   private
     FHidden: Boolean;
+    FHintText: String;
   protected
     procedure WMPaint(var Msg: TLMPaint); message LM_PAINT;
     procedure PaintWindow(DC: HDC); override;
     function GetDrawText: String; virtual;
   published
     property Hidden: Boolean read FHidden write FHidden default False;
+    property HintText: String read FHintText write FHintText;
   end;
 
   { TCustomDBEditButton }

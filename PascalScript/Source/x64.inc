@@ -348,6 +348,7 @@ _XMM0: Double;
   // 7bit
   {$IFDEF FPC}
   IsVirtualCons: Boolean;
+  tmp: Extended;
   {$ENDIF}
   //
 
@@ -405,13 +406,15 @@ _XMM0: Double;
   var
     p: Pointer;
   begin
+    SetLength(Stack, Length(Stack)+Len);
+    p := @Stack[Length(Stack)-Len];
+    Move(aData, p^, Len);
+    // 7bit. Переместил этот код с начала в конец.
     if Len > 8 then
       if Length(Stack) mod 16 <> 0 then begin
         SetLength(Stack, Length(Stack)+ (16-(Length(Stack) mod 16)));
       end;
-    SetLength(Stack, Length(Stack)+Len);
-    p := @Stack[Length(Stack)-Len];
-    Move(aData, p^, Len);
+    //
   end;
 
 {$IFDEF WINDOWS}
@@ -568,15 +571,28 @@ _XMM0: Double;
           begin
             if fvar^.aType.RealSize <= sizeof(IPointer) then
               StoreReg(IPointer(fvar.dta^))
+            // 7bit 2 регистра
+            else if fvar^.aType.RealSize = 16 then
+            begin
+              StoreReg(IPointer(fvar.dta^));
+              StoreReg(IPointer((fvar.dta+8)^));
+            end
+            //
             else
-              StoreReg(IPointer(fVar.Dta));
+            begin
+              StoreStack(fVar.Dta^, fVar^.aType.RealSize);              // 7bit
+              //StoreReg(IPointer(fVar.Dta));
+            end
           end;
         btVariant
         , btStaticArray:
           begin
             StoreReg(IPointer(fVar.Dta));
           end;
-        btExtended, btDouble: {8 bytes} begin
+        btExtended: begin
+            StoreStack(fVar.Dta^, fVar^.aType.RealSize);              // 7bit
+          end;
+        {btExtended, }btDouble: {8 bytes} begin
             StoreReg(double(fvar.dta^));
           end;
         btCurrency: {8 bytes} begin
@@ -736,7 +752,7 @@ begin
         SetLength(Stack, Length(Stack)+16 - (Length(Stack) mod 16));
       end;
       {$ENDIF} 
-      if Stack = nil then pp := nil else pp := @Stack[Length(Stack) -8];
+      if Stack = nil then pp := nil else pp := @Stack[Length(Stack)-8];
 {$IFDEF WINDOWS}
       Registers.Stack := pp;
       Registers.Items := Length(Stack) div 8;
@@ -757,7 +773,7 @@ begin
           end;
         btSingle:      tbtsingle(res.Dta^) := _XMM0;
         btDouble:      tbtdouble(res.Dta^) := _XMM0;
-        btExtended:    tbtextended(res.Dta^) := _XMM0;
+        btExtended:    tbtextended(res.Dta^) := _XMM0;      // 7bit - extended = 10 bytes = 80 bit - это не будет работать! Использую обходной путь RegisterFunctionName
         btchar,btU8, btS8:    tbtu8(res.dta^) := _RAX;
         btWideChar, btu16, bts16:  tbtu16(res.dta^) := _RAX;
         btClass : IPointer(res.dta^) := _RAX;
@@ -783,7 +799,7 @@ begin
         SetLength(Stack, Length(Stack)+16 - (Length(Stack) mod 16));
       end;
       {$ENDIF} 
-	if Stack = nil then pp := nil else pp := @Stack[Length(Stack) -8];
+	if Stack = nil then pp := nil else  pp := @Stack[Length(Stack) -8];
 {$IFDEF WINDOWS}
         Registers.Stack := pp;
         Registers.Items := Length(Stack) div 8;

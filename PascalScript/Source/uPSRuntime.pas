@@ -3898,6 +3898,23 @@ begin
   Result := true;
 end;
 
+// 7bit 16 bytes records (4 Integers)
+function CopyRecordContentsFromRegs(dest, src, src2: Pointer; aType: TPSTypeRec_Record): Boolean;
+var
+  o, o2, i: Longint;
+begin
+  for i := 0 to aType.FieldTypes.Count - 1 do
+  begin
+    o := Longint(atype.RealFieldOffsets[i]);
+    if o < 8 then
+      CopyArrayContents(Pointer(IPointer(Dest)+Cardinal(o)), Pointer(IPointer(Src)+Cardinal(o)), 1, aType.FieldTypes[i])
+    else
+      CopyArrayContents(Pointer(IPointer(Dest)+Cardinal(o)), Pointer(IPointer(Src2)+Cardinal(o)-8), 1, aType.FieldTypes[i])
+  end;
+  Result := true;
+end;
+//
+
 function CreateArrayFromVariant(Exec: TPSExec; dest: Pointer; src: Variant; DestType: TPSTypeRec): Boolean;
 var
   i: Integer;
@@ -11670,6 +11687,7 @@ begin
     btEnum: Result := true;
     btSet: Result := b.RealSize <= PointerSize;
     btStaticArray: Result := b.RealSize <= PointerSize;
+    btRecord: Result := b.RealSize <= PointerSize; // 7bit
   else
     Result := false;
   end;
@@ -11712,7 +11730,7 @@ begin
   case atype.BaseType of
     btVariant: Result := true;
     btSet: Result := atype.RealSize > PointerSize;
-    btRecord: Result := atype.RealSize > PointerSize;
+    btRecord: Result := atype.RealSize > PointerSize {7bit ->} * 2;
     btStaticArray: Result := atype.RealSize > PointerSize;
   else
     Result := false;
@@ -11972,6 +11990,7 @@ begin
 
   paramRecord:=StackAndParams;
   FStack := @paramRecord^.Rest;
+  Inc(FStack, 24);    // 7bit так и не понял почему, но это устраняет ошибки памяти при записи в стек.
   Params := TPSList.Create;
   s := decl;
   grfw(s);
@@ -12079,6 +12098,34 @@ begin
             inc(regno);
           end;
       end;
+    end
+    // 7bit Структура в 16 байт (например TRect) помещается в два регистра
+    else if (cpt.BaseType = btRecord) and (cpt.RealSize = 16) and (regno < 5) then
+    begin
+      tmp := CreateHeapVariant(cpt);
+      Params[i] := tmp;
+      case regno of
+        0: begin
+            CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.RDI, @paramRecord^.RSI, TPSTypeRec_Record(cpt));
+            inc(regno, 2);
+          end;
+        1: begin
+            CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.RSI, @paramRecord^.RDX, TPSTypeRec_Record(cpt));
+            inc(regno, 2);
+          end;
+        2: begin
+            CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.RDX, @paramRecord^.RCX, TPSTypeRec_Record(cpt));
+            inc(regno, 2);
+          end;
+        3: begin
+            CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.RCX, @paramRecord^.R8, TPSTypeRec_Record(cpt));
+            inc(regno, 2);
+          end;
+        4: begin
+            CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.R8, @paramRecord^.R9, TPSTypeRec_Record(cpt));
+            inc(regno, 2);
+          end;
+       end;
     end;
   end;
   //Start over for Returnvalue
@@ -12103,10 +12150,12 @@ begin
   //Now push remaining parameters on the Stack
   s := decl;
   grfw(s);
-  for i := 0 to c -1 do
+  //for i := 0 to c -1 do          // 7bit
+  for i := c - 1 downto 0 do       //
   begin
     //Get type
-    e := grlw(s);
+    //e := grlw(s);                // 7bit
+    e := grfw(s);                  //
     fmod := e[1];
     delete(e, 1, 1);
     //Already in a register?

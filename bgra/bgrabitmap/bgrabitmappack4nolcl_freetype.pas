@@ -2,7 +2,7 @@
   This source is only used to compile and install the package.
  }
 
-unit BGRABitmapPack4NoLCL;
+unit BGRABitmapPack4NoLCL_FreeType;
 
 {$warn 5023 off : no warning about unused units}
 interface
@@ -30,7 +30,7 @@ uses
   UniversalDrawer, LinearRGBABitmap, XYZABitmap, BGRAWriteTiff, 
   WordXYZABitmap, ExpandedBitmap, libwebp, linuxlib, BGRAReadWebP, 
   BGRAWriteWebP, BGRAClasses, avifbgra, libavif, BGRAWriteAvif, BGRAReadAvif, 
-  darwinlib, BGRAWriteJpeg, BGRAWriteBMP, BGRAWritePCX, BGRAPDF;
+  darwinlib, BGRAWriteJpeg, BGRAWriteBMP, BGRAWritePCX, BGRAFreeType, BGRAPDF;
 
 implementation
 
