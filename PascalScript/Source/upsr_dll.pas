@@ -16,7 +16,7 @@ function UnloadProc(Caller: TPSExec; p: TPSExternalProcRec; Global, Stack: TPSSt
 implementation
 uses
   {$IFDEF UNIX}
-  Unix, baseunix, dynlibs, termio, sockets;
+  Unix, baseunix, dynlibs, termio, sockets, sysUtils;
   {$ELSE}
   {$IFDEF KYLIX}SysUtils;{$ELSE}Windows;{$ENDIF}
   {$ENDIF}
@@ -80,9 +80,9 @@ var
   ph: PLoadedDll;
   dllhandle: THandle;
   loadwithalteredsearchpath: Boolean;
-  {$IFNDEF UNIX}
+  //{$IFNDEF UNIX}
   Filename: String;
-  {$ENDIF}
+  //{$ENDIF}
 begin
   s := p.Decl;
   Delete(s, 1, 4);
@@ -114,7 +114,10 @@ begin
       {$ENDIF}
 
       {$IFDEF UNIX_OR_KYLIX}
-      dllhandle := LoadLibrary(PChar(s2));
+      FileName := ExtractFilePath(ParamStr(0)) + s2;
+      if FileExists(FileName) then
+      else FileName := s2;
+      dllhandle := LoadLibrary(PChar(FileName));
       {$ELSE}
       {$IFDEF UNICODE}
       if Copy(s2, 1, 6) = '<utf8>' then

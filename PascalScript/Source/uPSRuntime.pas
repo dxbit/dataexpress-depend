@@ -8,8 +8,8 @@ Copyright (C) 2000-2009 by Carlo Kok (ck@carlo-kok.com)
 }
 
 interface
-uses
-  SysUtils, uPSUtils{$IFDEF DELPHI6UP}, variants{$ENDIF}{$IFDEF MACOS},uPSCMac{$ELSE}{$IFNDEF PS_NOIDISPATCH}{$IFDEF DELPHI3UP}, ActiveX, Windows{$ELSE}, Ole2{$ENDIF}{$ENDIF}{$ENDIF};
+uses                                                                                                              // 7bit
+  SysUtils, uPSUtils{$IFDEF DELPHI6UP}, variants{$ENDIF}{$IFDEF MACOS},uPSCMac{$ELSE}{$IFNDEF PS_NOIDISPATCH}{$IFDEF windows}{$IFDEF DELPHI3UP}, ActiveX, Windows{$ELSE}, Ole2{$ENDIF}{$ENDIF}{$ENDIF}{$ENDIF};
 
 
 type
@@ -1094,10 +1094,10 @@ function MakeString(const s: tbtstring): tbtstring;
 {$IFNDEF PS_NOWIDESTRING}
 function MakeWString(const s: tbtunicodestring): tbtstring;
 {$ENDIF}
-
-{$IFNDEF PS_NOIDISPATCH}
+                              // 7bit
+{$IFNDEF PS_NOIDISPATCH}{$IFDEF windows}
 function IDispatchInvoke(Self: IDispatch; PropertySet: Boolean; const Name: tbtString; const Par: array of Variant): Variant;
-{$ENDIF}
+{$ENDIF}{$ENDIF}
 
 
 implementation
@@ -9451,9 +9451,9 @@ begin
   RegisterDelphiFunction(@Null, 'Null', cdRegister);
   RegisterDelphiFunction(@VarIsNull, 'VarIsNull', cdRegister);
   RegisterDelphiFunction(@Variants.VarType, 'VarType', cdRegister);
-  {$IFNDEF PS_NOIDISPATCH}
+  {$IFNDEF PS_NOIDISPATCH}{$IFDEF windows}
   RegisterDelphiFunction(@IDispatchInvoke, 'IdispatchInvoke', cdregister);
-  {$ENDIF}
+  {$ENDIF}{$ENDIF}
 
 
   RegisterFunctionName('GetArrayLength', GetArrayLength, nil, nil);
@@ -13351,6 +13351,7 @@ end;
 
 
 {$IFNDEF PS_NOIDISPATCH}
+{$IFDEF windows}      // 7bit
 var
   DispPropertyPut: Integer = DISPID_PROPERTYPUT;
 const
@@ -13490,6 +13491,7 @@ begin
     WSFreeList.Free;
   end;
 end;
+{$ENDIF}
 {$ENDIF}
 
 
