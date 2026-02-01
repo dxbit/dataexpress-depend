@@ -117,7 +117,7 @@ begin
       FileName := ExtractFilePath(ParamStr(0)) + s2;
       if FileExists(FileName) then
       else FileName := s2;
-      dllhandle := LoadLibrary(PChar(FileName));
+      dllhandle := LoadLibrary({PChar}(FileName));
       {$ELSE}
       {$IFDEF UNICODE}
       if Copy(s2, 1, 6) = '<utf8>' then
@@ -130,7 +130,7 @@ begin
       if loadwithalteredsearchpath then
         dllhandle := LoadLibraryEx(PChar(Filename), 0, LOAD_WITH_ALTERED_SEARCH_PATH)
       else
-        dllhandle := LoadLibrary(PChar(Filename));
+        dllhandle := System.LoadLibrary({PChar}(Filename));
       {$ENDIF}
       if dllhandle = 0 then
       begin
