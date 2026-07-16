@@ -169,6 +169,7 @@ type
   TJvDesignSurface = class(TComponent)
   private
     FDesignCanvas: TCanvas; // 7bit
+    FLeftBnPressed: Boolean; // 7bit
     FActive: boolean;
     FAddClass: string;
     FContainer: TWinControl;
@@ -1617,16 +1618,8 @@ begin
       begin
         Result := Controller.MouseDown(mbRight, APt.X, APt.Y, TLMMOUSE(AMsg));
 
-        if Result and (FPopupMenu <> nil) then
-        begin
+        if Result and (FPopupMenu <> nil) and not FLeftBnPressed then
           FPopupMenu.Popup;
-
-          {p := container.ClientToScreen(APt);
-
-          FPopupMenu.PopupComponent := TComponent(FindControl(Apt.x, apt.y));
-          FPopupMenu.PopUp(p.x, p.y); }
-        end;
-
         //  result:=true;
       end;
       LM_RBUTTONUP:
@@ -1638,11 +1631,13 @@ begin
 
       LM_LBUTTONDOWN:
       begin
+        FLeftBnPressed := True;
         Result := Controller.MouseDown(mbLeft, APt.X, APt.Y, TLMMOUSE(AMsg));
         Result := True;
       end;
       LM_LBUTTONUP:
       begin
+        FLeftBnPressed := False;
         Result := Controller.MouseUp(mbLeft, APt.X, APt.Y, TLMMouse(aMsg));
         Result := True;
       end;
