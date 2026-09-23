@@ -467,11 +467,24 @@ var
           begin
 {$IFDEF FPC}
             MethodData := MKMethod(Self, Longint(FVar.Dta^));
+            if Longint(FVar.Dta^) = 0 then
+            begin
+              // Raw TMethod carried in the second/third slot (host method or a
+              // script method of another TPSExec); see x64.inc btProcPtr case.
+              MethodData.Data := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize))^);
+              MethodData.Code := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize2))^);
+            end;
             TempStr := StringOfChar(AnsiChar(#0),4);
             Pointer((@TempStr[1])^) := @MethodData;
 {$ELSE}
             TempStr := StringOfChar(AnsiChar(#0),8);
-            TMethod((@TempStr[1])^) := MKMethod(Self, Longint(FVar.Dta^));
+            if Longint(FVar.Dta^) <> 0 then
+              TMethod((@TempStr[1])^) := MKMethod(Self, Longint(FVar.Dta^))
+            else
+            begin
+              TMethod((@TempStr[1])^).Data := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize))^);
+              TMethod((@TempStr[1])^).Code := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize2))^);
+            end;
             UseReg := false;
 {$ENDIF}
           end;

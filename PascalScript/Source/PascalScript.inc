@@ -65,3 +65,12 @@ Defines:
   {$I PascalScriptFPC.inc}
 {$ENDIF}
 
+// x86-64 Windows passes const records (all sizes) by reference (a hidden
+// pointer), unlike by-value records. Win32 and x86-64 Linux keep the classic
+// by-value handling, so this flag is used only where that ABI matters.
+{$IFDEF CPUX64}
+  {$IFDEF MSWINDOWS}
+    {$DEFINE PS_WIN64_ABI}
+  {$ENDIF}
+{$ENDIF}
+

@@ -5,3 +5,7 @@ lib
 lib4nogui
 /extra
 backup
+PascalScript/tests
+PascalScript/agent.md
+PascalScript/PascalScript_changes_for_developers.md
+PascalScript/PascalScript_changes_for_users.md

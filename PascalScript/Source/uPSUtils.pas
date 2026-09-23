@@ -310,7 +310,7 @@ type
 {$IFNDEF PS_NOWIDESTRING}
 
   tbtwidestring = widestring;
-  tbtunicodestring = {$IFDEF DELPHI2009UP}UnicodeString{$ELSE}widestring{$ENDIF};
+  tbtunicodestring = {$IFDEF FPC}UnicodeString{$ELSE}{$IFDEF DELPHI2009UP}UnicodeString{$ELSE}widestring{$ENDIF}{$ENDIF};
 
   tbtwidechar = widechar;
   tbtNativeString = {$IFDEF DELPHI2009UP}tbtUnicodeString{$ELSE}tbtString{$ENDIF};

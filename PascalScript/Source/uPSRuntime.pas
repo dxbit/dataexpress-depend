@@ -1737,11 +1737,44 @@ end;
 
 { TPSTypeRec_Record }
 
+function TypeAlignment(aType: TPSTypeRec): Cardinal;
+var
+  I: Longint;
+  A: Cardinal;
+begin
+  if aType is TPSTypeRec_Record then
+  begin
+    Result := 1;
+    for I := 0 to TPSTypeRec_Record(aType).FieldTypes.Count - 1 do
+    begin
+      A := TypeAlignment(TPSTypeRec(TPSTypeRec_Record(aType).FieldTypes[I]));
+      if A > Result then
+        Result := A;
+    end;
+  end
+  else if aType is TPSTypeRec_StaticArray then
+    Result := TypeAlignment(TPSTypeRec_StaticArray(aType).ArrayType)
+  else
+  begin
+    Result := aType.RealSize;
+    if Result > SizeOf(Pointer) then
+      Result := SizeOf(Pointer);
+    if Result = 0 then
+      Result := 1;
+  end;
+end;
+
 procedure TPSTypeRec_Record.CalcSize;
+var
+  A: Cardinal;
 begin
   inherited;
   FrealSize := TPSTypeRec(FFieldTypes[FFieldTypes.Count-1]).RealSize +
     IPointer(RealFieldOffsets[RealFieldOffsets.Count -1]);
+  {$IFDEF CPU64}
+  A := TypeAlignment(Self);
+  FrealSize := (FRealSize + A - 1) and not (A - 1);
+  {$ENDIF}
 end;
 
 constructor TPSTypeRec_Record.Create(Owner: TPSExec);
@@ -1797,8 +1830,7 @@ begin
         for i := 0 to TPSTypeRec_Record(aType).FFieldTypes.Count -1 do
         begin
           t := TPSTypeRec_Record(aType).FieldTypes[i];
-          InitializeVariant(P, t);
-          p := Pointer(IPointer(p) + t.FrealSize);
+          InitializeVariant(Pointer(IPointer(p) + IPointer(TPSTypeRec_Record(aType).RealFieldOffsets[i])), t);
         end;
       end;
     btStaticArray:
@@ -1915,9 +1947,8 @@ begin
           t := TPSTypeRec_Record(aType).FieldTypes[i];
           case t.BaseType of
             btString, {$IFNDEF PS_NOWIDESTRING}btUnicodeString, btWideString, {$ENDIF}{$IFNDEF PS_NOINTERFACES}btInterface, {$ENDIF}btArray, btStaticArray,
-            btRecord: FinalizeVariant(p, t);
+            btRecord: FinalizeVariant(Pointer(IPointer(p) + IPointer(TPSTypeRec_Record(aType).RealFieldOffsets[i])), t);
           end;
-          p := Pointer(IPointer(p) + t.FrealSize);
         end;
       end;
     btStaticArray:
@@ -2547,10 +2578,15 @@ var
     function resolve(Dta: TPSTypeRec_Record): Boolean;
     var
       offs, l: Longint;
+      A: Cardinal;
     begin
       offs := 0;
       for l := 0 to Dta.FieldTypes.Count -1 do
       begin
+        {$IFDEF CPU64}
+        A := TypeAlignment(TPSTypeRec(Dta.FieldTypes[l]));
+        offs := (offs + A - 1) and not (A - 1);
+        {$ENDIF}
         Dta.RealFieldOffsets.Add(Pointer(offs));
         offs := offs + TPSTypeRec(Dta.FieldTypes[l]).RealSize;
       end;
@@ -3961,8 +3997,8 @@ begin
         for i := 0 to Len -1 do
         begin
           {tbtU32}IPointer(Dest^) := {tbtU32}IPointer(Src^); // 7bit
-          Dest := Pointer(IPointer(Dest) + 4);
-          Src := Pointer(IPointer(Src) + 4);
+          Dest := Pointer(IPointer(Dest) + SizeOf(IPointer));
+          Src := Pointer(IPointer(Src) + SizeOf(IPointer));
           Pointer(Dest^) := Pointer(Src^);
           Dest := Pointer(IPointer(Dest) + PointerSize);
           Src := Pointer(IPointer(Src) + PointerSize);
@@ -11336,7 +11372,7 @@ begin
   end;
   if s[1] <> #0 then
   begin
-    res := NewPPSVariantIFC(FStack[CurrStack + 1], True);
+    res := NewPPSVariantIFC(FStack[CurrStack], True);
   end else res := nil;
   Result := InnerfuseCall(Slf, Ptr, cdRegister, MyList, Res);
 
@@ -11684,10 +11720,22 @@ begin
     btArray,
     btSingle,
     btDouble,
+    {$IFDEF WINDOWS}
+    btExtended,
+    {$ENDIF}
     btEnum: Result := true;
     btSet: Result := b.RealSize <= PointerSize;
-    btStaticArray: Result := b.RealSize <= PointerSize;
+    btstaticarray: Result := b.RealSize <= PointerSize;
+    {$IFDEF WINDOWS}
     btRecord: Result := b.RealSize <= PointerSize; // 7bit
+    {$ENDIF}
+    {$IFNDEF WINDOWS}
+    {$IFNDEF PS_NOINT64}
+    //On x86-64 SysV Int64 is passed in GP registers (RDI..R9), so it must be
+    //register eligible here, otherwise it would always come from the stack.
+    bts64: Result := true;
+    {$ENDIF}
+    {$ENDIF}
   else
     Result := false;
   end;
@@ -11698,7 +11746,7 @@ begin
   case b.BaseType of
     btSingle,
     btDouble,
- //   btExtended,            <-- What about that??
+    btExtended,
     btU8,
     bts8,
     bts16,
@@ -11720,6 +11768,9 @@ begin
     btEnum: Result := true;
     btSet: Result := b.RealSize <= PointerSize;
     btStaticArray: Result := b.RealSize <= PointerSize;
+    {$IFDEF WINDOWS}
+    btRecord: Result := b.RealSize <= PointerSize;
+    {$ENDIF}
   else
     Result := false;
   end;
@@ -11728,9 +11779,17 @@ end;
 function AlwaysAsVariable(aType: TPSTypeRec): Boolean;
 begin
   case atype.BaseType of
+    {$IFDEF WINDOWS}
+    btVariant, btProcPtr: Result := true;
+    {$ELSE}
     btVariant: Result := true;
+    {$ENDIF}
     btSet: Result := atype.RealSize > PointerSize;
-    btRecord: Result := atype.RealSize > PointerSize {7bit ->} * 2;
+    {$IFDEF WINDOWS}
+    btRecord: Result := atype.RealSize > PointerSize;
+    {$ELSE}
+    btRecord: Result := atype.RealSize > PointerSize * 2;
+    {$ENDIF}
     btStaticArray: Result := atype.RealSize > PointerSize;
   else
     Result := false;
@@ -11738,7 +11797,7 @@ begin
 end;
 
 {$IFDEF WINDOWS}
-function MyAllMethodsHandler2_64(Self: PScriptMethodInfo; const StackAndParams: Pointer): Integer;
+function MyAllMethodsHandler2_64(Self: PScriptMethodInfo; const StackAndParams, OriginalStack: Pointer): Integer;
 type
   __PARAM_RECORD = packed record
     _xmm3_a, _xmm3_b: Pointer;
@@ -11749,6 +11808,7 @@ type
     Rest: array [0..0] of Pointer;
   end;
   PPARAM_RECORD = ^__PARAM_RECORD;
+  PMETHOD = ^TMethod;
 
 var
   Decl: tbtString;
@@ -11761,12 +11821,22 @@ var
   FStack: pointer;
   ex: TPSExceptionHandler;
   paramRecord:PPARAM_RECORD;
+  HasHiddenResult: Boolean;
+  MethodValue: TMethod;
 begin
   //Get Declaration, i.e. Types & Number of Parameters
   Decl := TPSInternalProcRec(Self^.Se.FProcs[Self^.ProcNo]).ExportDecl;
+  s := Decl;
+  e := grfw(s);
+  HasHiddenResult := e <> '-1';
+  if HasHiddenResult then
+  begin
+    cpt := Self.Se.GetTypeNo(StrToInt(e));
+    HasHiddenResult := not ResultAsRegister(cpt);
+  end;
 
   paramRecord:=StackAndParams;
-  FStack := @paramRecord^.Rest;
+  FStack := Pointer(IPointer(OriginalStack) + 40);
   Params := TPSList.Create;
   s := decl;
   grfw(s);
@@ -11777,13 +11847,21 @@ begin
     grfw(s);
   end;
   c := Params.Count;
-  regno := 0;
   Result := 0;
+  //Caller ABI (Windows x64, proven by live capture): the native caller
+  //  RCX = Self = TMethod.Data = PScriptMethodInfo (never a script parameter),
+  //  RDX = declaration parameter #1 (for event properties the '.of object'
+  //       receiver/Sender, for plain methods the first explicit argument),
+  //  R8  = parameter #2, R9 = parameter #3,
+  //  [RSP+40..] = parameters #4..N in declaration order.
+  //So the first three declaration parameters live in RDX/R8/R9 (float-typed
+  //ones in the XMM1/XMM2/XMM3 slots the shim snapshots), everything else is
+  //read sequentially from FStack (= OriginalStack + 40, the first stacked
+  //argument). The first two script-visible parameters normally sit in R8/R9.
+  regno := 0;
   s := decl;
   grfw(s);
-
-  //Fill parameters
-  for i := c-1 downto 0 do
+  for i := 0 to c - 1 do
   begin
     //Get parameter Type and Param-Object
     e := grfw(s);
@@ -11791,66 +11869,68 @@ begin
     delete(e, 1, 1);
     //Type of Parameter
     cpt := Self.Se.GetTypeNo(StrToInt(e));
+    if regno >= 3 then
+      Continue;
+    //16-byte records always come from the stack on this path, except const
+    //records ('%'), which arrive as a single by-reference pointer (one slot).
+    if (cpt.BaseType = btRecord) and (cpt.RealSize = 16) and (fmod <> '%') then
+      Continue;
     //--Pointers etc.
-    if ((fmod = '%') or (fmod = '!') or (AlwaysAsVariable(cpt))) and (RegNo < 4) then
+    if (cpt.BaseType = btProcPtr) then
+    begin
+      tmp := CreateHeapVariant(cpt);
+      Params[c - 1 - i] := tmp;
+      case regno of
+        0: MethodValue := PMETHOD(paramRecord^.RDX)^;
+        1: MethodValue := PMETHOD(paramRecord^.R8)^;
+        2: MethodValue := PMETHOD(paramRecord^.R9)^;
+      end;
+      IPointer(PPointer(@PPSVariantData(tmp)^.Data)^) := 0;
+      Pointer(Pointer(IPointer(@PPSVariantData(tmp)^.Data) + PointerSize)^) := MethodValue.Data;
+      Pointer(Pointer(IPointer(@PPSVariantData(tmp)^.Data) + PointerSize2)^) := MethodValue.Code;
+      inc(regno);
+    end
+    else if ((fmod = '%') or (fmod = '!') or (AlwaysAsVariable(cpt))) then
     begin
       tmp := CreateHeapVariant(self.Se.FindType2(btPointer));
       PPSVariantPointer(tmp).DestType := cpt;
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       case regno of
-        0: begin
-            PPSVariantPointer(tmp).DataDest := paramRecord^.RCX;
-            inc(regno);
-          end;
-        1: begin
-            PPSVariantPointer(tmp).DataDest := paramRecord^.RDX;
-            inc(regno);
-          end;
-        2: begin
-            PPSVariantPointer(tmp).DataDest := paramRecord^.R8;
-            inc(regno);
-          end;
-        3: begin
-            PPSVariantPointer(tmp).DataDest := paramRecord^.R9;
-            inc(regno);
-          end;
+        0: PPSVariantPointer(tmp).DataDest := paramRecord^.RDX;
+        1: PPSVariantPointer(tmp).DataDest := paramRecord^.R8;
+        2: PPSVariantPointer(tmp).DataDest := paramRecord^.R9;
       end;
+      inc(regno);
     end
     //--all types of parameters that can be stored in registers
-    else if SupportsRegister(cpt) and (RegNo < 4) then
+    else
     begin
       tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
-      case regno of
-        0: begin
-            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
-              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm0_a, 1, cpt)
-            else
-              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.RCX, 1, cpt);
-            inc(regno);
-          end;
-        1: begin
-            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
+      Params[c - 1 - i] := tmp;
+          case regno of
+        0:
+          begin
+            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) or (cpt.BaseType=btExtended) then
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm1_a, 1, cpt)
             else
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.RDX, 1, cpt);
-            inc(regno);
           end;
-        2: begin
-            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
+        1:
+          begin
+            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) or (cpt.BaseType=btExtended) then
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm2_a, 1, cpt)
             else
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.R8, 1, cpt);
-            inc(regno);
           end;
-        3: begin
-            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
+        2:
+          begin
+            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) or (cpt.BaseType=btExtended) then
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm3_a, 1, cpt)
             else
-              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.R9, 1, cpt) ;
-            inc(regno);
+              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.R9, 1, cpt);
           end;
       end;
+      inc(regno);
     end;
   end;
   //Start over for Returnvalue
@@ -11864,52 +11944,47 @@ begin
       Res := CreateHeapVariant(Self.Se.FindType2(btPointer));
       PPSVariantPointer(Res).DestType := cpt;
       Params.Add(Res);
-      PPSVariantPointer(Res).DataDest := @paramRecord^.RAX;
-    end{ else      //Are there return values on the Stack in x64 - probably yes, but how?
+      PPSVariantPointer(Res).DataDest := paramRecord^.RDX;
+    end else
     begin
       Res := CreateHeapVariant(cpt);
       Params.Add(Res);
-    end};
+    end;
   end else Res := nil;
 
   //Now push remaining parameters on the Stack
   s := decl;
   grfw(s);
-  for i := 0 to c -1 do
+  for i := 0 to c - 1 do       // stack args land on their own declaration indices
   begin
     //Get type
-    e := grlw(s);
+    e := grfw(s);
     fmod := e[1];
     delete(e, 1, 1);
     //Already in a register?
-    if Params[i] <> nil then Continue;
+    if Params[c - 1 - i] <> nil then Continue;
     cpt := Self.Se.GetTypeNo(StrToInt(e));
     //Pointer?
     if (fmod = '%') or (fmod = '!') or (AlwaysAsVariable(cpt)) then
     begin
       tmp := CreateHeapVariant(self.Se.FindType2(btPointer));
       PPSVariantPointer(tmp).DestType := cpt;
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       PPSVariantPointer(tmp).DataDest := Pointer(FStack^);
       FStack := Pointer(IPointer(FStack) + PointerSize);
       Inc(Result, PointerSize);
     end
-(*    else if SupportsRegister(cpt) then
+    else
     begin
       tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       CopyArrayContents(@PPSVariantData(tmp)^.Data, Pointer(FStack), 1, cpt);
-      FStack := Pointer(IPointer(FStack) + 4);
-      end;
-    end *)else
-    begin
-      tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
-      CopyArrayContents(@PPSVariantData(tmp)^.Data, Pointer(FStack), 1, cpt);
-      FStack := Pointer((IPointer(FStack) + cpt.RealSize + 3) and not 3);
-      Inc(Result, (cpt.RealSize + 3) and not 3);
+      FStack := Pointer((IPointer(FStack) + cpt.RealSize + 7) and not 7);
+      Inc(Result, (cpt.RealSize + 7) and not 7);
     end;
   end;
+
+  
 
   //Create exception handler and call the beast!
   ex := TPSExceptionHandler.Create;
@@ -11934,7 +12009,10 @@ begin
     Params.DeleteLast;
     if (ResultAsRegister(Res.FType)) then
     begin
-      CopyArrayContents(@paramRecord^.RAX, @PPSVariantData(res)^.Data, 1, Res^.FType);
+      if (Res.FType.BaseType = btSingle) or (Res.FType.BaseType = btDouble) or (Res.FType.BaseType = btExtended) then
+        CopyArrayContents(@paramRecord^._xmm0_a, @PPSVariantData(res)^.Data, 1, Res^.FType)
+      else
+        CopyArrayContents(@paramRecord^.RAX, @PPSVariantData(res)^.Data, 1, Res^.FType);
     end;
     DestroyHeapVariant(res);
   end;
@@ -11976,6 +12054,11 @@ type
 var
   Decl: tbtString;
   I, C, regno: Integer;
+  PType: array of Integer;
+  gp, fp: Integer;
+  cpt0: PIFTypeRec;
+  shgp: Integer;
+  SavedHRbp: Pointer;
   Params: TPSList;
   Res, Tmp: PIFVariant;
   cpt: PIFTypeRec;
@@ -11984,6 +12067,7 @@ var
   FStack: pointer;
   ex: TPSExceptionHandler;
   paramRecord:PPARAM_RECORD;
+  ResultFP: Extended;   // SysV: 80-bit Extended result is returned in ST0 (x87)
 begin
   //Get Declaration, i.e. Types & Number of Parameters
   Decl := TPSInternalProcRec(Self^.Se.FProcs[Self^.ProcNo]).ExportDecl;
@@ -11991,6 +12075,7 @@ begin
   paramRecord:=StackAndParams;
   FStack := @paramRecord^.Rest;
   Inc(FStack, 24);    // 7bit так и не понял почему, но это устраняет ошибки памяти при записи в стек.
+  SavedHRbp := Pointer(PInt64(@paramRecord^.Rest)^);
   Params := TPSList.Create;
   s := decl;
   grfw(s);
@@ -12000,18 +12085,80 @@ begin
     Params.Add(nil);
     grfw(s);
   end;
-  c := Params.Count;
-  regno := 1;     // Начинаем заполнять параметры с регистра RSI !!! RSI=Self, RDX=Param1, RCX=Param2, ...
-                  // Я не знаю почему, но это работает. Почему Self не в RDI я не смог понять.
+c := Params.Count;
   Result := 0;
+  //String-returning methods are marshalled by the engine with a hidden
+  //result-var address in RSI, so every genuine GP argument shifts one
+  //register to the right (Sender->RDX, next->RCX, ...). Detect that from
+  //the result type token (the first word of the export declaration).
+  shgp := 0;
+  s := decl;
+  e := grfw(s);
+  if e <> '-1' then
+  begin
+    cpt0 := Self.Se.GetTypeNo(StrToInt(e));
+    if cpt0.BaseType = btString then shgp := 1;
+  end;
+  //Precompute SysV register ranks for each parameter in declaration order:
+  //  GP rank 1..5 consumes RSI,RDX,RCX,R8,R9 (RDI is taken by the hidden
+  //  method pointer = PScriptMethodInfo and never carries a parameter),
+  //  FP rank 0..7 consumes XMM0..XMM7; higher ranks come from the stack.
+  SetLength(PType, c);
   s := decl;
   grfw(s);
-
-  //Fill parameters
-  for i := c-1 downto 0 do
+  gp := 1 + shgp;
+  fp := 0;
+  for i := 0 to c - 1 do
   begin
-    //Get parameter Type and Param-Object
     e := grfw(s);
+    fmod := e[1];
+    delete(e, 1, 1);
+    cpt := Self.Se.GetTypeNo(StrToInt(e));
+{$IFDEF WINDOWS}
+    if (cpt.BaseType = btSingle) or (cpt.BaseType = btDouble) then
+    begin
+      PType[i] := fp;
+      inc(fp);
+    end
+    else
+    begin
+      PType[i] := gp;
+      inc(gp);
+      if (cpt.BaseType = btRecord) and (cpt.RealSize = 16) then inc(gp);
+    end;
+{$ELSE}
+    if (cpt.BaseType = btSingle) or (cpt.BaseType = btDouble) then
+    begin
+      PType[i] := fp;
+      inc(fp);
+    end
+    else if cpt.BaseType = btExtended then
+    begin
+      //SysV x86-64 (FPC) passes the 80-bit Extended on the stack; it consumes
+      //neither a GP register nor an XMM register, so it must not advance either
+      //rank here (otherwise a later Int64 etc. would be read from the wrong
+      //register). The fill-loop leaves such params nil and the stack-loop reads
+      //them from the stack.
+      PType[i] := gp;   // value unused (not register-eligible); keep initialized
+    end
+    else
+    begin
+      PType[i] := gp;
+      inc(gp);
+      if (cpt.BaseType = btRecord) and (cpt.RealSize = 16) then inc(gp);
+    end;
+{$ENDIF}
+  end;
+
+//Fill parameters
+  s := decl;
+  grfw(s);
+  for i := 0 to c - 1 do
+  begin
+    regno := PType[i];
+    //Get parameter Type and Param-Object
+e := grfw(s);
+    fmod := e[1];
     fmod := e[1];
     delete(e, 1, 1);
     //Type of Parameter
@@ -12021,7 +12168,7 @@ begin
     begin
       tmp := CreateHeapVariant(self.Se.FindType2(btPointer));
       PPSVariantPointer(tmp).DestType := cpt;
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       case regno of
         0: begin
             PPSVariantPointer(tmp).DataDest := paramRecord^.RDI;
@@ -12050,10 +12197,12 @@ begin
       end;
     end
     //--all types of parameters that can be stored in registers
-    else if SupportsRegister(cpt) and (RegNo < 6) then
+    else if SupportsRegister(cpt) and
+      ((((cpt.BaseType = btSingle) or (cpt.BaseType = btDouble)) and (RegNo < 8)) or
+       ((cpt.BaseType <> btSingle) and (cpt.BaseType <> btDouble) and (RegNo < 6))) then
     begin
       tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       case regno of
         0: begin
             if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
@@ -12097,13 +12246,23 @@ begin
               CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^.R9, 1, cpt) ;
             inc(regno);
           end;
+        6: begin
+            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
+              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm6_a, 1, cpt);
+            inc(regno);
+          end;
+        7: begin
+            if (cpt.BaseType=btSingle) or (cpt.BaseType=btDouble) then
+              CopyArrayContents(@PPSVariantData(tmp)^.Data, @paramRecord^._xmm7_a, 1, cpt);
+            inc(regno);
+          end;
       end;
     end
     // 7bit Структура в 16 байт (например TRect) помещается в два регистра
     else if (cpt.BaseType = btRecord) and (cpt.RealSize = 16) and (regno < 5) then
     begin
       tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       case regno of
         0: begin
             CopyRecordContentsFromRegs(@PPSVariantData(tmp)^.Data, @paramRecord^.RDI, @paramRecord^.RSI, TPSTypeRec_Record(cpt));
@@ -12139,7 +12298,13 @@ begin
       Res := CreateHeapVariant(Self.Se.FindType2(btPointer));
       PPSVariantPointer(Res).DestType := cpt;
       Params.Add(Res);
-      PPSVariantPointer(Res).DataDest := @paramRecord^.RAX;
+      //On SysV x64 string-returning method-calls use a hidden result-var whose
+      //address FPC passes in RSI; the engine must write the string head there
+      //(not into RAX), or the host reads garbage from its own temp.
+      if cpt.BaseType = btString then
+        PPSVariantPointer(Res).DataDest := Pointer(paramRecord^.RSI)
+      else
+        PPSVariantPointer(Res).DataDest := @paramRecord^.RAX;
     end else      //Are there return values on the Stack in x64 - probably yes, but how?
     begin
       Res := CreateHeapVariant(cpt);
@@ -12150,8 +12315,7 @@ begin
   //Now push remaining parameters on the Stack
   s := decl;
   grfw(s);
-  //for i := 0 to c -1 do          // 7bit
-  for i := c - 1 downto 0 do       //
+  for i := 0 to c - 1 do       // 0..c-1: stack args must land on their own declaration indices
   begin
     //Get type
     //e := grlw(s);                // 7bit
@@ -12159,14 +12323,14 @@ begin
     fmod := e[1];
     delete(e, 1, 1);
     //Already in a register?
-    if Params[i] <> nil then Continue;
+    if Params[c - 1 - i] <> nil then Continue;
     cpt := Self.Se.GetTypeNo(StrToInt(e));
     //Pointer?
     if (fmod = '%') or (fmod = '!') or (AlwaysAsVariable(cpt)) then
     begin
       tmp := CreateHeapVariant(self.Se.FindType2(btPointer));
       PPSVariantPointer(tmp).DestType := cpt;
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       PPSVariantPointer(tmp).DataDest := Pointer(FStack^);
       FStack := Pointer(IPointer(FStack) + PointerSize);
       Inc(Result, PointerSize);
@@ -12181,12 +12345,14 @@ begin
     end *)else
     begin
       tmp := CreateHeapVariant(cpt);
-      Params[i] := tmp;
+      Params[c - 1 - i] := tmp;
       CopyArrayContents(@PPSVariantData(tmp)^.Data, Pointer(FStack), 1, cpt);
-      FStack := Pointer((IPointer(FStack) + cpt.RealSize + 3) and not 3);
-      Inc(Result, (cpt.RealSize + 3) and not 3);
+      FStack := Pointer((IPointer(FStack) + cpt.RealSize + 7) and not 7);
+      Inc(Result, (cpt.RealSize + 7) and not 7);
     end;
   end;
+
+  
 
   //Create exception handler and call the beast!
   ex := TPSExceptionHandler.Create;
@@ -12209,9 +12375,43 @@ begin
   if (Res <> nil) then
   begin
     Params.DeleteLast;
+    //16-byte records are returned in RAX:RDX on SysV x64. The host's
+    //script-writer already put field A at @RAX and field B at @RAX+8
+    //(= the Rest slot); mirror B into the RDX slot so the shim's
+    //"pop rdx" hands it back to the caller.
+    if (Res.FType.BaseType = btPointer) and
+       (PPSVariantPointer(Res).DestType.BaseType = btRecord) and
+       (PPSVariantPointer(Res).DestType.RealSize = 16) then
+    begin
+      paramRecord^.RDX := Pointer(PInt64(@paramRecord^.Rest)^);
+      //The engine writes field B over the shim's saved caller-RBP (RAX+8 = Rest).
+      //Put the real RBP back so the shim's "leave" / "pop rbp" restores it.
+      PInt64(@paramRecord^.Rest)^ := PInt64(@SavedHRbp)^;
+    end;
     if (ResultAsRegister(Res.FType)) then
     begin
-      CopyArrayContents(@paramRecord^.RAX, @PPSVariantData(res)^.Data, 1, Res^.FType);
+      //FP results are returned in XMM0 on SysV x64; the shim reloads xmm0
+      //from this slot on exit, so write the result there (RAX holds the
+      //Integer/general return).
+      if (Res.FType.BaseType = btSingle) or (Res.FType.BaseType = btDouble) then
+        CopyArrayContents(@paramRecord^._xmm0_a, @PPSVariantData(Res).Data, 1, Res.FType)
+      else if (Res.FType.BaseType = btExtended) then
+      begin
+        //SysV x86-64 (FPC) returns 80-bit Extended in ST0 (x87), not XMM0/RAX.
+        //The shim wrapper does not touch ST0, so the host's "fstpt result"
+        //picks the value up from there on return.
+        Move(PPSVariantData(Res).Data, ResultFP, SizeOf(Extended));
+        asm
+          fld tbyte ptr [ResultFP]
+        end;
+      end
+      else
+        CopyArrayContents(@paramRecord^.RAX, @PPSVariantData(Res).Data, 1, Res.FType);
+    end
+    else if (Res.FType.BaseType = btRecord) and (Res.FType.RealSize = 16) then
+    begin
+      paramRecord^.RDX := Pointer(PInt64(@paramRecord^.Rest)^);
+      PInt64(@paramRecord^.Rest)^ := PInt64(@SavedHRbp)^;
     end;
     DestroyHeapVariant(res);
   end;
@@ -12235,50 +12435,33 @@ begin
 end;
 {$ENDIF}
 {$IFDEF WINDOWS}
-procedure MyAllMethodsHandler;
+procedure MyAllMethodsHandler; assembler;
+var
+  CallFrame: array[0..15] of Pointer;
 asm
-  push rbp
-  mov rbp,rsp
-  push rax  // for eventual result values...
-  push rcx  // SELF
-  push rdx  // PARAM 1  (bossibly)
-  push r8   // PARAM 2
-  push r9   // PARAM 3
-  sub rsp, 16
-  movdqu [rsp], xmm0
-  sub rsp, 16
-  movdqu [rsp], xmm1
-  sub rsp, 16
-  movdqu [rsp], xmm2
-  sub rsp, 16
-  movdqu [rsp], xmm3
-
-  mov rdx, rsp
-
-  sub RSP, 32    //Create Savehouse for storing registers...
-
+  lea r10, [rbp+8] // entry rsp: return address pushed by native event caller
+  mov [CallFrame+120], r10
+  mov [CallFrame+112], rax
+  mov [CallFrame+104], rcx
+  mov [CallFrame+96], rdx
+  mov [CallFrame+88], r8
+  mov [CallFrame+80], r9
+  movdqu [CallFrame+64], xmm0
+  movdqu [CallFrame+48], xmm1
+  movdqu [CallFrame+32], xmm2
+  movdqu [CallFrame+16], xmm3
+  lea rdx, [CallFrame+16]
+  mov r8, [CallFrame+120]
   call MyAllMethodsHandler2_64
-
-  add RSP, 32
-
-  movdqu xmm3, [rsp]
-  add rsp, 16
-  movdqu xmm2, [rsp]
-  add rsp, 16
-  movdqu xmm1, [rsp]
-  add rsp, 16
-  movdqu xmm0, [rsp]
-  add rsp, 16
-  pop r9
-  pop r8
-  pop rdx
-  pop rcx
-  pop rax
-
-  leave
-
-  add rsp, 8 //cleanup stackframe generated by FPC
-  ret
+  movdqu xmm3, [CallFrame+16]
+  movdqu xmm2, [CallFrame+32]
+  movdqu xmm1, [CallFrame+48]
+  movdqu xmm0, [CallFrame+64]
+  mov r9, [CallFrame+80]
+  mov r8, [CallFrame+88]
+  mov rdx, [CallFrame+96]
+  mov rcx, [CallFrame+104]
+  mov rax, [CallFrame+112]
 end;
 {$ELSE}
 procedure MyAllMethodsHandler;
@@ -13366,6 +13549,7 @@ var
   ExceptInfo: TExcepInfo;
   aName: PWideChar;
   WSFreeList: TPSList;
+  vt: TVarType;
 begin
   if Self = nil then begin
     raise EPSException.Create('Variant is null, cannot invoke', nil, 0, 0);
@@ -13418,25 +13602,46 @@ begin
         {$ENDIF}
         end else
         begin
-          DispParam.rgvarg[i].vt := VT_VARIANT or VT_BYREF;
-          New(
-          {$IFDEF DELPHI4UP}
-          POleVariant
-          {$ELSE}
-          PVariant{$ENDIF}
-           (DispParam.rgvarg[i].pvarVal));
+          vt := PVarData(@Par[High(Par)-i]).VType;
+          if (vt and varArray) <> 0 then
+          begin
+            DispParam.rgvarg[i].vt := vt;
+            DispParam.rgvarg[i].parray := PSafeArray(PPointer(PByte(@Par[High(Par)-i]) + 8)^);
+          end else
+          case vt of
+            varEmpty:
+              DispParam.rgvarg[i].vt := VT_EMPTY;
+            varNull:
+              DispParam.rgvarg[i].vt := VT_NULL;
+            varInteger:
+            begin
+              DispParam.rgvarg[i].vt := VT_I4;
+              DispParam.rgvarg[i].lVal := PLongint(PByte(@Par[High(Par)-i]) + 8)^;
+            end;
+            varBoolean:
+            begin
+              DispParam.rgvarg[i].vt := VT_BOOL;
+              DispParam.rgvarg[i].vbool := WordBool(PWord(PByte(@Par[High(Par)-i]) + 8)^);
+            end;
+            varDouble, varDate:
+            begin
+              DispParam.rgvarg[i].vt := vt;
+              DispParam.rgvarg[i].dblVal := PDouble(PByte(@Par[High(Par)-i]) + 8)^;
+            end;
+          else
+            begin
+              DispParam.rgvarg[i].vt := VT_VARIANT or VT_BYREF;
+              New(
+              {$IFDEF DELPHI4UP}
+              POleVariant
+              {$ELSE}
+              PVariant{$ENDIF}
+               (DispParam.rgvarg[i].pvarVal));
 
-          (*
-          {$IFDEF DELPHI4UP}
-            POleVariant
-          {$ELSE}
-            PVariant
-          {$ENDIF}
-           (DispParam.rgvarg[i].pvarVal)^ := Par[High(Par)-i];
-          *)
-          Move(Par[High(Par)-i],Pointer(DispParam.rgvarg[i].pvarVal)^,
-           Sizeof({$IFDEF DELPHI4UP}OleVariant{$ELSE}Variant{$ENDIF}));
-
+              Move(Par[High(Par)-i],Pointer(DispParam.rgvarg[i].pvarVal)^,
+               Sizeof({$IFDEF DELPHI4UP}OleVariant{$ELSE}Variant{$ENDIF}));
+            end;
+          end;
         end;
       end;
       i :=Self.Invoke(DispatchId, GUID_NULL, LOCALE_SYSTEM_DEFAULT, Param, DispParam, @Result, @ExceptInfo, @ArgErr);

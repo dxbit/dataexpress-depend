@@ -33,6 +33,7 @@ type
     FName: tbtString;
     FOrgName: tbtString;
     FMode: TPSParameterMode;
+    FIsConst: Boolean;
     FType: TPSType;
     {$IFDEF PS_USESSUPPORT}
     FDeclareUnit: tbtString;
@@ -50,6 +51,8 @@ type
     property aType: TPSType read FType write FType;
 
     property Mode: TPSParameterMode read FMode write FMode;
+
+    property IsConst: Boolean read FIsConst write FIsConst;
 
     {$IFDEF PS_USESSUPPORT}
     property DeclareUnit: tbtString read FDeclareUnit write FDeclareUnit;
@@ -1814,6 +1817,15 @@ const
   RPS_NotProperty = 'Not a property : ''%s''';
   RPS_UnknownProperty = 'Unknown Property : ''%s''';
 
+function ParamIsABIPointer(Param: TPSParameterDecl): Boolean;
+begin
+  Result := Param.Mode <> pmIn;
+  {$IFDEF PS_WIN64_ABI}
+  if (Param.aType <> nil) and (Param.aType.BaseType = btRecord) and Param.IsConst then
+    Result := True;
+  {$ENDIF}
+end;
+
 function DeclToBits(const Decl: TPSParametersDecl): tbtString;
 var
   i: longint;
@@ -1826,7 +1838,7 @@ begin
     Result := Result + #1;
   for i := 0 to Decl.ParamCount -1 do
   begin
-    if Decl.Params[i].Mode <> pmIn then
+    if ParamIsABIPointer(Decl.Params[i]) then
       Result := Result + #1
     else
       Result := Result + #0;
@@ -1994,6 +2006,7 @@ var
   FuncType: Byte;
   VNames: tbtString;
   modifier: TPSParameterMode;
+  ParamIsConst: Boolean;
   VCType: TPSType;
   ERow, EPos, ECol: Integer;
 
@@ -2035,9 +2048,11 @@ begin
     begin
       while True do
       begin
+        ParamIsConst := False;
         if Parser.CurrTokenId = CSTII_Const then
         begin
           modifier := pmIn;
+          ParamIsConst := True;
           Parser.Next;
         end
         else
@@ -2178,6 +2193,7 @@ begin
             DeclareRow := ERow;
             DeclareCol := ECol;
             Mode := modifier;
+            IsConst := ParamIsConst;
             OrgName := copy(VNames, 1, Pos(tbtchar('|'), VNames) - 1);
             aType := VCType;
           end;
@@ -2424,6 +2440,7 @@ var
   VNames, Name: tbtString;
   Decl: TPSParametersDecl;
   modifier: TPSParameterMode;
+  ParamIsConst: Boolean;
   VCType: TPSType;
   x: TPSRegProc;
 begin
@@ -2453,6 +2470,7 @@ begin
       begin
         while True do
         begin
+          ParamIsConst := False;
           if Parser.CurrTokenId = CSTII_Out then
           begin
             Modifier := pmOut;
@@ -2461,6 +2479,7 @@ begin
           if Parser.CurrTokenId = CSTII_Const then
           begin
             Modifier := pmIn;
+            ParamIsConst := True;
             Parser.Next;
           end else
           if Parser.CurrTokenId = CSTII_Var then
@@ -2496,6 +2515,7 @@ begin
             with Decl.AddParam do
             begin
               Mode := modifier;
+              IsConst := ParamIsConst;
               OrgName := copy(VNames, 1, Pos(tbtchar('|'), VNames) - 1);
               aType := VCType;
             end;
@@ -2536,7 +2556,7 @@ begin
       x.ImportDecl := x.ImportDecl + #1;
     for i := 0 to Decl.ParamCount -1 do
     begin
-      if Decl.Params[i].Mode <> pmIn then
+      if ParamIsABIPointer(Decl.Params[i]) then
         x.ImportDecl := x.ImportDecl + #1
       else
         x.ImportDecl := x.ImportDecl + #0;
@@ -3644,6 +3664,7 @@ var
   IsFunction: Boolean;
   VNames: tbtString;
   modifier: TPSParameterMode;
+  ParamIsConst: Boolean;
   Decl: TPSParametersDecl;
   VCType: TPSType;
 begin
@@ -3661,9 +3682,11 @@ begin
       begin
         while True do
         begin
+          ParamIsConst := False;
           if FParser.CurrTokenId = CSTII_Const then
           begin
             Modifier := pmIn;
+            ParamIsConst := True;
             FParser.Next;
           end else
           if FParser.CurrTokenId = CSTII_Out then
@@ -3728,6 +3751,7 @@ begin
             with Decl.AddParam do
             begin
               Mode := modifier;
+              IsConst := ParamIsConst;
               OrgName := copy(VNames, 1, Pos(tbtchar('|'), VNames) - 1);
               FType := VCType;
             end;
@@ -4768,6 +4792,7 @@ var
   ParamNo: Cardinal;
   FunctionDecl: TPSParametersDecl;
   modifier: TPSParameterMode;
+  ParamIsConst: Boolean;
   Func: TPSInternalProcedure;
   F2: TPSProcedure;
   EPos, ECol, ERow: Cardinal;
@@ -4850,9 +4875,11 @@ begin
           ParamNo := 0;
         while True do
         begin
+          ParamIsConst := False;
           if FParser.CurrTokenId = CSTII_Const then
           begin
             modifier := pmIn;
+            ParamIsConst := True;
             FParser.Next;
           end
           else
@@ -4929,6 +4956,7 @@ begin
             begin
               OrgName := copy(FunctionParamNames, 1, Pos(tbtchar('|'), FunctionParamNames) - 1);
               Mode := modifier;
+              IsConst := ParamIsConst;
               aType := FunctionTempType;
               {$IFDEF PS_USESSUPPORT}
               DeclareUnit:=fModule;
@@ -9424,6 +9452,8 @@ begin
         if (Tmp.ParamMode <> pmOut) and (Tmp.ExpectedType = FAnyString) then
         begin
           Res := GetTypeNo(BlockInfo, tmp.Val);
+          if (Res <> nil) and (Res.BaseType = btChar) then
+            Res := FindBaseType(btString);
           Break;
         end;
       end;
@@ -13489,6 +13519,16 @@ begin
 
   for i := 0 to decl.ParamCount -1 do
   begin
+    {$IFDEF PS_WIN64_ABI}
+    //On Windows x64 const records are passed by reference (one pointer),
+    //so mark them with '%' so the caller knows to pass a pointer and the
+    //callee does not copy them back.
+    if decl.GetParam(i).IsConst and
+       (decl.GetParam(i).aType <> nil) and
+       (decl.GetParam(i).aType.BaseType = btRecord) then
+      Result := Result + ' %'
+    else
+    {$ENDIF}
     if decl.GetParam(i).Mode = pmIn then
       Result := Result + ' @'
     else
@@ -13533,6 +13573,7 @@ var
   i: Longint;
 
 begin
+  if FProcs = nil then raise EPSCompilerException.Create(RPS_OnUseEventOnly);
   pDecl := TPSParametersDecl.Create;
   p := nil;
   try
@@ -13557,7 +13598,7 @@ begin
       p.ImportDecl := p.ImportDecl + #1;
     for i := 0 to pDecl.ParamCount -1 do
     begin
-      if pDecl.Params[i].Mode <> pmIn then
+      if ParamIsABIPointer(pDecl.Params[i]) then
         p.ImportDecl := p.ImportDecl + #1
       else
         p.ImportDecl := p.ImportDecl + #0;
@@ -14617,7 +14658,7 @@ begin
       s := s + #1;
     for i := 0 to C.Decl.ParamCount -1 do
     begin
-      if c.Decl.Params[i].Mode <> pmIn then
+      if ParamIsABIPointer(c.Decl.Params[i]) then
         s := s + #1
       else
         s := s + #0;
@@ -14712,7 +14753,7 @@ begin
       s := s + #1;
     for i := 0 to c.Decl.ParamCount -1 do
     begin
-      if c.Decl.Params[i].Mode <> pmIn then
+      if ParamIsABIPointer(c.Decl.Params[i]) then
         s := s + #1
       else
         s := s + #0;
@@ -15359,6 +15400,7 @@ begin
     np := AddParam;
     np.OrgName := orgp.OrgName;
     np.Mode := orgp.Mode;
+    np.IsConst := orgp.IsConst;
     np.aType := orgp.aType;
     np.DeclarePos:=orgp.DeclarePos;
     np.DeclareRow:=orgp.DeclareRow;
@@ -15565,7 +15607,7 @@ begin
     s := s + #1;
   for i := 0 to C.Decl.ParamCount -1 do
   begin
-    if c.Decl.Params[i].Mode <> pmIn then
+    if ParamIsABIPointer(c.Decl.Params[i]) then
       s := s + #1
     else
       s := s + #0;

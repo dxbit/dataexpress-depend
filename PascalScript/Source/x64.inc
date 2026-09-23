@@ -27,11 +27,13 @@ type
     SingleBits: Integer; // 72
   end;
 
-procedure x64call(
+procedure x64call_impl(
   Address: Pointer;
   out _RAX: IPointer;
   var _XMM0: Double;
-  var Registers: TRegisters); assembler; {$IFDEF FPC}nostackframe;{$ENDIF}
+  var Registers: TRegisters); assembler;
+var
+  CallFrame: array[0..259] of IPointer;
 asm
 (* Registers:
     RCX: Address
@@ -40,28 +42,24 @@ asm
     R9: _REGISTERS
     fpc inserts an 20h empty space
 *)
-//{$IFDEF FPC}
-  push rbp
-  mov rbp,rsp
-//{$ENDIF}
-  push rcx  // address         ;rbp -8
-  push rdx  // @_rax           ;rbp -16
-  push r8   // @_xmm0          ;rbp -24
-  push r9   // _registers      ;rbp -32
+  mov [CallFrame+2048], rcx
+  mov [CallFrame+2056], rdx
+  mov [CallFrame+2064], r8
+  mov [CallFrame+2072], r9
 
-  mov rax, [rbp-32] //registers
+  mov rax, r9
 
-  mov rcx, [rax+64] // items/count
-  mov rdx, [rax+56] // stack
+  mov rcx, [rax+64]
+  mov rdx, [rax+56]
+  lea r10, [rsp+32]
+  lea r10, [r10+rcx*8-8]
   jmp @compareitems
 @work:
-{$IFDEF FPC}
-  push qword ptr [rdx]
-{$ELSE}
-  push [rdx]
-{$ENDIF}
+  mov r11, [rdx]
+  mov [r10], r11
   dec rcx
   sub rdx,8
+  sub r10,8
 @compareitems:
   or rcx, rcx
   jnz @work
@@ -96,15 +94,13 @@ asm
 
 
 
-  // rbp-16: address of xmm0
-
   bt rcx, 0
   jnc @g0
-  mov rdx, [rbp -24]
+  mov rdx, [CallFrame+2064]
   cvtsd2ss xmm0, [rdx]
   jmp @g0e
   @g0:
-  mov rdx, [rbp -24]
+  mov rdx, [CallFrame+2064]
   movsd xmm0, [rdx]
   @g0e:
 
@@ -115,38 +111,39 @@ asm
   mov r9, [rax+24]
 
 
-  mov RAX, [rbp-8]
-
-  // weird thing on windows, it needs 32 bytes in the CALLEE side to do whatever in
-  sub RSP, 32
+  mov RAX, [CallFrame+2048]
 
   call RAX
 
-  add RSP, 32 // undo the damage done earlier
-
   // copy result back
-  mov RDX, [rbp-16]
+  mov RDX, [CallFrame+2056]
   mov [RDX], RAX
 
-  mov rax, [rbp-32] //registers
+  mov rax, [CallFrame+2072]
 
   bt [rax+72], 8                 // if atype.basetype  <> btSingle
   jnc @g5                        //
   cvtss2sd xmm1,xmm0             // convert single to double  into xmm1
-  mov rdx,[rbp-24]               // @_xmm0  ;rbp -24
+  mov rdx,[CallFrame+2064]
   movsd qword ptr [rdx], xmm1    // save  xmm1 to param _xmm0
   jmp @g5e                       // exit if atype.basetype  = btSingle
 
   @g5:                           //else "if atype.basetype  = btSingle"
-    mov rdx,[rbp-24]             // @_xmm0  ;rbp -24
+    mov rdx,[CallFrame+2064]
     movsd qword ptr [rdx], xmm0  // save  xmm1 to param _xmm0
 
   @g5e:
-
-
-  leave
-  ret
 end;
+
+procedure x64call(
+  Address: Pointer;
+  out _RAX: IPointer;
+  var _XMM0: Double;
+  var Registers: TRegisters);
+begin
+  x64call_impl(Address, _RAX, _XMM0, Registers);
+end;
+
 {$ELSE}
 type
   TRegisters = packed record
@@ -171,7 +168,8 @@ procedure x64call(
   out _RAX: IPointer;
 
   var Registers: TRegisters;
-  aStack: Pointer; aItems: PtrUInt; var _XMM0: Double); assembler; nostackframe;
+  aStack: Pointer; aItems: PtrUInt; var _XMM0: Double;
+  out _RDX: IPointer); assembler; nostackframe;
 
 
 asm
@@ -187,34 +185,38 @@ asm
     rbp-16   _rax
     rbp-24   _xmm0
     rbp-32   regs
+    rbp-40   _rdx (7th param, taken from the caller stack)
 *)
   push rbp
   mov rbp,rsp
   push rdi  // address
   push rsi  // _rax
   push r9   // xmm0
-  push rdx
-{$IFDEF PS_STACKALIGN}
-  bt r8, 0
-  jnc @skipjump
-  sub rsp, 8
-@skipjump:
-{$ENDIF}
-  mov rax, rdx
-  jmp @compareitems
-@work:
-{$IFDEF FPC}
-  push qword ptr [rcx]
-{$ELSE} 
-  push [rcx]
-{$ENDIF}  
+  push rdx  // regs
+  mov rax, [rsp+48]
+  push rax  // _rdx
+  // rsp = rbp-40
+  mov rax, r8
+  shl rax, 3
+  sub rsp, rax          // reserve stack-argument area (aItems*8)
+  and rsp, -16          // SysV: rsp must be 16-byte aligned at the call
+  // copy the PStack array into the reserved area, byte order preserved:
+  //   first stack argument (lowest address) = PStack[0..7]
+  mov rdi, rax          // aItems*8
+  lea rdx, [rsp+rdi]    // rdx = top of reserved area
+  test rax, rax
+  jz @skipcopy          // items=0: no stack arguments to copy (aStack=nil)
+@copyback:
+  mov rdi, [rcx]        // load PStack[slot]
+  sub rdx, 8
+  mov [rdx], rdi        // write into reserved area
+  sub rcx, 8
   dec r8
-  sub rcx,8
-@compareitems:
-  or r8, r8
-  jnz @work
+  jnz @copyback
+@skipcopy:
 
   // copy registers
+  mov rax, [rbp-32]     // Registers
   // xmm0
   mov rdx,[rbp-24]
   bt [rax+104], 0
@@ -309,6 +311,8 @@ asm
   // copy result back
   mov rsi, [rbp-16]          // _RAX parameter
   mov [rsi], RAX
+  mov rsi, [rbp-40]          // _RDX parameter
+  mov [rsi], RDX             // (RDX holds the call result; 16-byte record results)
   mov rsi, [rbp-24]          // _XMM0 parameter
 
   // xmm0 res
@@ -323,7 +327,8 @@ asm
   @skipresre:
 
 
-  pop rdx
+  pop rax  // _rdx slot
+  pop rdx  // regs
   pop r9   // xmm0
   pop rsi  // _rax
   pop rdi  // address
@@ -336,6 +341,7 @@ function TPSExec.InnerfuseCall(_Self, Address: Pointer; CallingConv: TPSCallingC
 var
   Stack: array of Byte;
   _RAX: IPointer;
+  _RDX: IPointer;
 _XMM0: Double;
   Registers: TRegisters;
 {$IFNDEF WINDOWS}
@@ -571,6 +577,10 @@ _XMM0: Double;
           begin
             if fvar^.aType.RealSize <= sizeof(IPointer) then
               StoreReg(IPointer(fvar.dta^))
+            {$IFDEF WINDOWS}
+            else
+              StoreReg(IPointer(fvar.Dta));
+            {$ELSE}
             // 7bit 2 регистра
             else if fvar^.aType.RealSize = 16 then
             begin
@@ -579,22 +589,32 @@ _XMM0: Double;
             end
             //
             else
+{$IFDEF FPC}
             begin
-              StoreStack(fVar.Dta^, fVar^.aType.RealSize);              // 7bit
-              //StoreReg(IPointer(fVar.Dta));
+              StoreStack(fVar.Dta^, fVar^.aType.RealSize + ((PointerSize - (fVar^.aType.RealSize mod PointerSize)) mod PointerSize));
             end
+{$ELSE}
+              StoreStack(fVar.Dta^, fVar^.aType.RealSize);
+{$ENDIF}
+            {$ENDIF}
           end;
         btVariant
         , btStaticArray:
           begin
             StoreReg(IPointer(fVar.Dta));
           end;
-        btExtended: begin
-            StoreStack(fVar.Dta^, fVar^.aType.RealSize);              // 7bit
-          end;
-        {btExtended, }btDouble: {8 bytes} begin
+{$IFDEF WINDOWS}
+        btExtended, btDouble: {8 bytes — Extended == Double on Win64} begin
             StoreReg(double(fvar.dta^));
           end;
+{$ELSE}
+        btExtended: begin
+            StoreStack(fVar.Dta^, fVar^.aType.RealSize);
+          end;
+        btDouble: {8 bytes} begin
+            StoreReg(double(fvar.dta^));
+          end;
+{$ENDIF}
         btCurrency: {8 bytes} begin
             StoreReg(IPointer(fvar.dta^));
           end;
@@ -635,10 +655,25 @@ _XMM0: Double;
         btProcPtr:
           begin
             GetMem(p, PointerSize2);
-            TMethod(p^) := MKMethod(Self, Longint(FVar.Dta^));
+            if Longint(FVar.Dta^) <> 0 then
+              TMethod(p^) := MKMethod(Self, Longint(FVar.Dta^))
+            else
+            begin
+              // Method-number 0 means the value carries a raw TMethod instead:
+              // a host method, or a script method belonging to another TPSExec
+              // (the event-property read path stores it in the second/third
+              // pointer-sized slots). Passing it to the host would otherwise
+              // silently become TMethod(nil, nil) — as if nil was assigned.
+              TMethod(p^).Data := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize))^);
+              TMethod(p^).Code := Pointer(Pointer((IPointer(FVar.Dta)+PointerSize2))^);
+            end;
             // 7bit
             {$IFDEF WINDOWS}
             StoreReg(IPointer(p));
+            GetMem(pp, 2*PointerSize);
+            pp^ := 1; {tag: raw memory block to free after the call}
+            Pointer(Pointer(IPointer(pp)+PointerSize)^) := p;
+            CallData.Add(pp);
             {$ELSE}
             // Если адреса обработчика не помещаются в регистры (если обработчик
             // идет пятым параметром), то сохраняем их в стеке. Причем регистр
@@ -723,14 +758,21 @@ begin
       btRecord,
       btSet:
         begin
+          {$IFDEF WINDOWS}
           if res.aType.RealSize > PointerSize then GetPtr(res);
+          {$ELSE}
+          // Linux x86-64 (SysV): FPC returns 9..16-byte records in RAX:RDX,
+          // so no hidden result pointer must be pushed as the first register.
+          if res.aType.RealSize > 16 then GetPtr(res);
+          {$ENDIF}
         end;
     end;
    end;
 {$ENDIF}
     for I := 0 to Params.Count - 1 do
     begin
-      if not GetPtr(rp(Params[I])) then Exit;
+      if not GetPtr(rp(Params[I])) then
+        Exit;
     end;
     if assigned(res) then begin
 {$IFNDEF PS_RESBEFOREPARAMETERS}
@@ -743,7 +785,12 @@ begin
         btRecord,
         btSet:
           begin
+            {$IFDEF WINDOWS}
             if res.aType.RealSize > PointerSize then GetPtr(res);
+            {$ELSE}
+            // Linux: 9..16-byte record results come back in RAX:RDX.
+            if res.aType.RealSize > 16 then GetPtr(res);
+            {$ENDIF}
           end;
       end;
 {$ENDIF}
@@ -758,7 +805,7 @@ begin
       Registers.Items := Length(Stack) div 8;
       x64call(Address, _RAX, _XMM0, Registers);
 {$ELSE}
-      x64call(Address, _RAX, Registers, pp, Length(Stack) div 8, _XMM0);
+      x64call(Address, _RAX, Registers, pp, Length(Stack) div 8, _XMM0, _RDX);
 {$ENDIF}
       case res^.aType.BaseType of
         btRecord, btSet:
@@ -769,11 +816,26 @@ begin
               3,
               4: Longint(res.Dta^) := _RAX;
               5,6,7,8: IPointer(res.dta^) := _RAX;
+              9..16: begin
+                // x86-64 SysV: records of 9..16 bytes are returned in RAX:RDX
+                PInt64(res.dta)^ := Int64(_RAX);
+                PInt64(PAnsiChar(res.dta) + 8)^ := Int64(_RDX);
+              end;
             end;
           end;
         btSingle:      tbtsingle(res.Dta^) := _XMM0;
         btDouble:      tbtdouble(res.Dta^) := _XMM0;
-        btExtended:    tbtextended(res.Dta^) := _XMM0;      // 7bit - extended = 10 bytes = 80 bit - это не будет работать! Использую обходной путь RegisterFunctionName
+{$IFNDEF WINDOWS}
+        btExtended:    // SysV x86-64 (FPC) returns 80-bit Extended in ST0 (x87), not XMM0.
+          begin
+            asm
+              fstp tbyte ptr [tmp]
+            end;
+            tbtextended(res.Dta^) := tmp;
+          end;
+{$ELSE}
+        btExtended:    tbtextended(res.Dta^) := _XMM0;      // Win64: Extended == Double (8 bytes)
+{$ENDIF}
         btchar,btU8, btS8:    tbtu8(res.dta^) := _RAX;
         btWideChar, btu16, bts16:  tbtu16(res.dta^) := _RAX;
         btClass : IPointer(res.dta^) := _RAX;
@@ -801,20 +863,22 @@ begin
       {$ENDIF} 
 	if Stack = nil then pp := nil else  pp := @Stack[Length(Stack) -8];
 {$IFDEF WINDOWS}
-        Registers.Stack := pp;
+Registers.Stack := pp;
         Registers.Items := Length(Stack) div 8;
         x64call(Address, _RAX, _XMM0, Registers);
 {$ELSE}
-       x64call(Address, _RAX, Registers, pp, Length(Stack) div 8, _XMM0);
+        x64call(Address, _RAX, Registers, pp, Length(Stack) div 8, _XMM0, _RDX);
 {$ENDIF}
     end;
     Result := True;
   finally
+    //tmp := CallData.Count;
     for i := CallData.Count -1 downto 0 do
     begin
       pp := CallData[i];
       case pp^ of
         0: DestroyOpenArray(Self, Pointer(pp));
+        1: FreeMem(Pointer(Pointer(IPointer(pp)+PointerSize)^));
       end;
     end;
     CallData.Free;
